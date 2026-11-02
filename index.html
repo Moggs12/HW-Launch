@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<title>%THEME_NAME%</title>
+<meta name="theme-color" content="%THEME_SKY%">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="%THEME_SHORT%">
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="icon" href="./icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="%THEME_FONTS%">
+</head>
+<body>
+<div class="stage" id="stage">
+  <canvas id="c" aria-label="Launch game: the car sits in a catapult at the start of a toy city street"></canvas>
+  <div class="loading" id="loading">Building the city…</div>
+  <div class="hud">
+    <div class="row">
+      <div class="pill"><img id="carImg" alt=""><div class="t"><small id="carTier">Car 1 of 6</small><b id="carName"></b></div></div>
+      <div class="right">
+        <div class="pill coins"><span class="cn" aria-hidden="true"></span><span id="coins">0</span></div>
+        <div class="best">BEST <b id="best">—</b></div>
+      </div>
+    </div>
+    <div class="bottom">
+      <button class="btn blue" id="garageBtn">Garage</button>
+      <div class="flight" id="flight" hidden>
+        <button class="btn boost" id="boostBtn">BOOST</button>
+        <button class="btn special" id="specialBtn"><small>Action</small><span id="specialName"></span></button>
+      </div>
+    </div>
+  </div>
+  <div class="dist" id="dist" hidden><div class="n"><span id="distNum">0</span><small> m</small></div><div class="rc" id="runCoins"></div></div>
+  <div class="aim" id="aimhint"><p>Drag down to pull back. Drag left or right to aim. Let go to launch!</p><div class="arrow" aria-hidden="true">▼</div></div>
+  <div class="power" id="power" aria-hidden="true"></div>
+
+  <div class="result" id="result" hidden>
+    <div class="card" role="dialog" aria-labelledby="resTitle">
+      <h2 id="resTitle">CRASH!</h2>
+      <div class="d" id="resDist">0 m</div>
+      <span class="nb" id="resBest" hidden>New best!</span>
+      <div class="earn"><span class="cn" aria-hidden="true"></span><span id="resCoins">+0</span></div>
+      <div class="brk" id="resBreak"></div>
+      <div class="acts"><button class="btn" id="againBtn">Launch again</button><button class="btn blue" id="resGarage">Garage</button></div>
+    </div>
+  </div>
+
+  <div class="garage" id="garage" hidden>
+    <div class="sheet" role="dialog" aria-labelledby="gName">
+      <div class="gh">
+        <img id="gImg" alt="">
+        <div class="gt"><h3 id="gName"></h3><p><b id="gSpecial"></b>: <span id="gSpecialText"></span></p></div>
+        <button class="x" id="closeGarage" aria-label="Close garage">✕</button>
+      </div>
+      <div class="wallet">
+        <div class="pill coins"><span class="cn" aria-hidden="true"></span><span id="gCoins">0</span></div>
+        <div class="prog"><div class="bar"><i id="gProg"></i></div><small id="gProgTxt"></small></div>
+      </div>
+      <div id="upgList" class="upg-list"></div>
+      <button class="btn unlock" id="unlockBtn" hidden>Unlock!</button>
+      <h4>Your cars</h4>
+      <div class="cars" id="carList"></div>
+      <div class="tools" id="tools" hidden><span>Testing tools (dev builds or ?test in the URL)</span><button id="testCoins">+1,000 coins</button><button id="testMax">Max this car</button><button id="testReset">Start over</button></div>
+    </div>
+  </div>
+</div>
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>

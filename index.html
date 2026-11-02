@@ -18,7 +18,8 @@
 </head>
 <body>
 <div class="stage" id="stage">
-  <canvas id="c" aria-label="Launch game: the car sits in a catapult at the start of a toy city street"></canvas>
+  <canvas id="c" aria-label="Launch game: the car sits in a catapult at the bottom of a big ramp in a toy city street"></canvas>
+  <canvas id="speed" class="speed" aria-hidden="true"></canvas>
   <div class="loading" id="loading">Building the city…</div>
   <div class="hud">
     <div class="row">
@@ -40,6 +41,15 @@
   <div class="dist" id="dist" hidden><div class="n"><span id="distNum">0</span><small> m</small></div><div class="rc" id="runCoins"></div></div>
   <div class="aim" id="aimhint"><p>Drag down to pull back. Drag left or right to aim. Let go to launch!</p><div class="arrow" aria-hidden="true">▼</div></div>
   <div class="power" id="power" aria-hidden="true"></div>
+
+  <div class="home" id="home" hidden>
+    <div class="logo" id="logo" aria-label="%THEME_NAME%"><span id="logo1"></span><span id="logo2"></span></div>
+    <img class="home-car" id="homeCar" alt="">
+    <button class="btn start" id="startBtn" aria-label="Start"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4l13 8-13 8z"/></svg></button>
+    <button class="round-btn sound-btn" id="soundBtn" aria-label="Sound on"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z"/><path class="waves" d="M16 8c1.5 1.2 1.5 6.8 0 8M18.5 5.5c3 2.5 3 10.5 0 13" fill="none" stroke-width="2" stroke-linecap="round"/><path class="cross" d="M16 9l6 6M22 9l-6 6" fill="none" stroke-width="2.2" stroke-linecap="round"/></svg></button>
+    <div class="test-badge home-test" id="homeTest" hidden>TEST MODE</div>
+    <div class="build" id="build"></div>
+  </div>
 
   <div class="result" id="result" hidden>
     <div class="card" role="dialog" aria-labelledby="resTitle">
@@ -63,7 +73,7 @@
         <div class="pill coins"><span class="cn" aria-hidden="true"></span><span id="gCoins">0</span></div>
         <div class="prog"><div class="bar"><i id="gProg"></i></div><small id="gProgTxt"></small></div>
       </div>
-      <div class="tools" id="tools" hidden><span>TEST MODE: pick any car below (locked ones are marked TEST). Hold the car badge (top left) for 2 seconds to turn test mode off.</span><button id="testCoins">+1,000 coins</button><button id="testMax">Max this car</button><button id="testReset">Start over</button></div>
+      <div class="tools" id="tools" hidden><span>TEST MODE: pick any car below (locked ones are marked TEST). Hold the car badge (top left) or the title on the start screen for 2 seconds to turn test mode off.</span><button id="testCoins">+1,000 coins</button><button id="testMax">Max this car</button><button id="testReset">Start over</button></div>
       <div id="upgList" class="upg-list"></div>
       <button class="btn unlock" id="unlockBtn" hidden>Unlock!</button>
       <h4>Your cars</h4>

@@ -37,30 +37,48 @@ describe('physics', () => {
     expect(launchSpeed(CARS[5], { ...freshLevels(), engine: 2 }, .5)).toBeCloseTo((66 + 12) * (.32 + .34));
   });
 
+  const flying = (s: { mode: string }) => s.mode === 'ramp' || s.mode === 'air';
+
+  it('runs up the ramp, speeding up, and leaves the lip at launch speed', () => {
+    const s = makeShot(CARS[0], freshLevels(), SPECIALS.swerve.effect, 1, 0, world.ramp);
+    expect(s.mode).toBe('ramp');
+    expect(s.z).toBeCloseTo(world.ramp.startZ);
+    let lastV = 0, t = 0;
+    while (s.mode === 'ramp') { stepShot(s, 1 / 120, null); expect(s.rampV).toBeGreaterThanOrEqual(lastV); lastV = s.rampV; t += 1 / 120; }
+    expect(s.events).toContain('takeoff');
+    expect(s.y).toBeCloseTo(CITY.ramp.height);
+    expect(Math.hypot(s.vx, s.vy, s.vz)).toBeCloseTo(22);
+    expect(t).toBeLessThan(1.6);   // the run-up is quick
+  });
+
   it('flies forward (−z) and comes back down', () => {
-    const s = makeShot(CARS[0], freshLevels(), SPECIALS.swerve.effect, 1, 0);
+    const s = makeShot(CARS[0], freshLevels(), SPECIALS.swerve.effect, 1, 0, world.ramp);
     let peak = 0;
-    for (let i = 0; i < 2000 && s.mode === 'air'; i++) { stepShot(s, 1 / 120, null); peak = Math.max(peak, s.y); }
+    for (let i = 0; i < 3000 && flying(s); i++) { stepShot(s, 1 / 120, null); peak = Math.max(peak, s.y); }
     expect(s.z).toBeLessThan(-10);
-    expect(peak).toBeGreaterThan(2);
+    expect(peak).toBeGreaterThan(CITY.ramp.height + 2);
     expect(s.y).toBe(0);
   });
 
   it('wings make the car glide further', () => {
-    const plain = makeShot(CARS[1], freshLevels(), SPECIALS.flameBoost.effect, 1, 0);
-    const winged = makeShot(CARS[1], { ...freshLevels(), wings: 3 }, SPECIALS.flameBoost.effect, 1, 0);
-    for (const s of [plain, winged]) for (let i = 0; i < 2000 && s.mode === 'air'; i++) stepShot(s, 1 / 120, null);
+    const plain = makeShot(CARS[1], freshLevels(), SPECIALS.flameBoost.effect, 1, 0, world.ramp);
+    const winged = makeShot(CARS[1], { ...freshLevels(), wings: 3 }, SPECIALS.flameBoost.effect, 1, 0, world.ramp);
+    for (const s of [plain, winged]) for (let i = 0; i < 3000 && flying(s); i++) stepShot(s, 1 / 120, null);
     expect(-winged.z).toBeGreaterThan(-plain.z);
   });
 
-  it('boost uses up its fuel', () => {
-    const s = makeShot(CARS[0], { ...freshLevels(), boost: 2 }, SPECIALS.swerve.effect, 1, 0);
+  it('boost uses up its fuel (in the air only)', () => {
+    const s = makeShot(CARS[0], { ...freshLevels(), boost: 2 }, SPECIALS.swerve.effect, 1, 0, world.ramp);
+    while (s.mode === 'ramp') stepShot(s, 1 / 120, { boost: true });
+    expect(s.fuel).toBeCloseTo(.64);
     for (let i = 0; i < 200; i++) stepShot(s, 1 / 120, { boost: true });
     expect(s.fuel).toBeLessThanOrEqual(0);
   });
 
-  it('a special can only be used once', () => {
-    const s = makeShot(CARS[1], freshLevels(), SPECIALS.flameBoost.effect, 1, 0);
+  it('a special can only be used once, and not on the ramp', () => {
+    const s = makeShot(CARS[1], freshLevels(), SPECIALS.flameBoost.effect, 1, 0, world.ramp);
+    expect(useSpecial(s, CITY.course)).toBe(false);
+    while (s.mode === 'ramp') stepShot(s, 1 / 120, null);
     expect(useSpecial(s, CITY.course)).toBe(true);
     expect(useSpecial(s, CITY.course)).toBe(false);
     expect(s.burn).toBeCloseTo(1.3);
@@ -128,16 +146,16 @@ describe('economy', () => {
 
   it('every launch earns coins', () => {
     expect(runReward(0, 0).total).toBeGreaterThan(0);
-    expect(runReward(100, 3)).toEqual({ distCoins: 100, coinCoins: 15, total: 115 });
+    expect(runReward(100, 3)).toEqual({ distCoins: 150, coinCoins: 15, total: 165 });
   });
 
   it('banks a run and tracks the best distance', () => {
     const s = freshSave();
     const r1 = recordRun(s, 0, 40.4, 2);
-    expect(r1).toMatchObject({ distance: 40, total: 50, isBest: true });
+    expect(r1).toMatchObject({ distance: 40, total: 70, isBest: true });
     const r2 = recordRun(s, 0, 30, 0);
     expect(r2.isBest).toBe(false);
-    expect(s.coins).toBe(80);
+    expect(s.coins).toBe(115);
     expect(s.best[0]).toBe(40);
   });
 

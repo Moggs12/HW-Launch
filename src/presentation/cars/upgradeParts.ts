@@ -7,8 +7,8 @@ import type { CarModel } from './models';
 /* What upgrades look like on the car: wings, booster tanks, bigger (and finally gold) wheels. */
 export function fitUpgrades(m: CarModel, lv: UpgradeLevels, accent: number) {
   const mt = m.mounts;
-  if (m.upgrades) m.group.remove(m.upgrades);
-  const u = new THREE.Group(); m.upgrades = u; m.group.add(u);
+  if (m.upgrades) m.body.remove(m.upgrades);
+  const u = new THREE.Group(); m.upgrades = u; m.body.add(u);
   m.boostFlames = [];
   if (lv.wings > 0) {
     const sc = .6 + .22 * lv.wings;

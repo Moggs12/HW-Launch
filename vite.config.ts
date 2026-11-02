@@ -1,6 +1,16 @@
+import { execSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import type { Plugin } from 'vite';
 import { defineConfig } from 'vitest/config';
 import { THEME } from './src/content/theme';
+
+/* "0.2.0 · abc1234": shown small on the home screen so we can tell which version a phone is running */
+function buildLabel() {
+  const version = JSON.parse(readFileSync('package.json', 'utf8')).version as string;
+  let sha = (process.env.GITHUB_SHA ?? '').slice(0, 7);
+  if (!sha) { try { sha = execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim(); } catch { sha = 'dev'; } }
+  return `${version} · ${sha}`;
+}
 
 /* Fills the page title/fonts from the theme file and writes the PWA manifest from it too,
    so the name and colours only ever live in src/content/theme.ts. */
@@ -46,5 +56,6 @@ export default defineConfig({
   base: './',            // works on GitHub Pages (/HW-Launch/) and inside a Capacitor app
   build: { target: 'es2022', chunkSizeWarningLimit: 700 },   // three.js is most of the bundle
   plugins: [themePlugin()],
+  define: { __BUILD__: JSON.stringify(buildLabel()) },
   test: { include: ['src/**/*.test.ts'] },
 });

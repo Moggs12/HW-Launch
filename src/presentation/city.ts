@@ -45,15 +45,17 @@ export function buildCity(scene: THREE.Scene, world: World): CityView {
   // ground, road, pavements
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(1600, 2200), new THREE.MeshStandardMaterial({ color: 0x9ccf72, roughness: 1 }));
   ground.rotation.x = -Math.PI / 2; ground.position.set(0, -.02, -LEN / 2); ground.receiveShadow = true; city.add(ground);
-  const roadTex = roadTexture(); roadTex.repeat.set(1, (LEN + 40) / 14);
-  const road = new THREE.Mesh(new THREE.PlaneGeometry(R * 2, LEN + 40), new THREE.MeshStandardMaterial({ map: roadTex, roughness: .85 }));
-  road.rotation.x = -Math.PI / 2; road.position.set(0, 0, -LEN / 2 + 10); road.receiveShadow = true; city.add(road);
-  const walkTex = walkTexture(); walkTex.repeat.set(1, (LEN + 40) / WALK);
+  // the street runs from behind the start area (level.behind) to the end of the course
+  const SPAN = LEN + level.behind + 20, MID = (level.behind + 20 - LEN) / 2;
+  const roadTex = roadTexture(); roadTex.repeat.set(1, SPAN / 14);
+  const road = new THREE.Mesh(new THREE.PlaneGeometry(R * 2, SPAN), new THREE.MeshStandardMaterial({ map: roadTex, roughness: .85 }));
+  road.rotation.x = -Math.PI / 2; road.position.set(0, 0, MID); road.receiveShadow = true; city.add(road);
+  const walkTex = walkTexture(); walkTex.repeat.set(1, SPAN / WALK);
   for (const s of [-1, 1]) {
-    const w = new THREE.Mesh(new THREE.BoxGeometry(WALK, .24, LEN + 40), new THREE.MeshStandardMaterial({ map: walkTex, roughness: .9 }));
-    w.position.set(s * (R + WALK / 2), .12, -LEN / 2 + 10); w.receiveShadow = true; city.add(w);
-    const kerb = new THREE.Mesh(new THREE.BoxGeometry(.25, .28, LEN + 40), new THREE.MeshStandardMaterial({ color: 0xf2efe8, roughness: .8 }));
-    kerb.position.set(s * (R + .12), .14, -LEN / 2 + 10); city.add(kerb);
+    const w = new THREE.Mesh(new THREE.BoxGeometry(WALK, .24, SPAN), new THREE.MeshStandardMaterial({ map: walkTex, roughness: .9 }));
+    w.position.set(s * (R + WALK / 2), .12, MID); w.receiveShadow = true; city.add(w);
+    const kerb = new THREE.Mesh(new THREE.BoxGeometry(.25, .28, SPAN), new THREE.MeshStandardMaterial({ color: 0xf2efe8, roughness: .8 }));
+    kerb.position.set(s * (R + .12), .14, MID); city.add(kerb);
   }
 
   layout.side.forEach(block);
@@ -62,14 +64,14 @@ export function buildCity(scene: THREE.Scene, world: World): CityView {
 
   // trees + lamps along the pavements (instanced)
   {
-    const n = (Math.ceil((LEN + 6) / 16) + 2) * 2;
+    const n = (Math.ceil((LEN + level.behind) / 16) + 2) * 2;
     const trunk = new THREE.InstancedMesh(new THREE.CylinderGeometry(.14, .18, 1.6, 10), new THREE.MeshStandardMaterial({ color: 0x8a5a33, roughness: .9 }), n);
     const crown = new THREE.InstancedMesh(new THREE.SphereGeometry(1.15, 16, 12), new THREE.MeshStandardMaterial({ color: 0x48b34a, roughness: .8 }), n);
     const pole = new THREE.InstancedMesh(new THREE.CylinderGeometry(.07, .09, 5.2, 10), new THREE.MeshStandardMaterial({ color: 0x3a4a6b, roughness: .4, metalness: .6 }), n);
     const bulb = new THREE.InstancedMesh(new THREE.SphereGeometry(.26, 14, 10), new THREE.MeshStandardMaterial({ color: 0xfff2c2, emissive: 0xffe08a, emissiveIntensity: .9 }), n);
     crown.castShadow = true;
     const m = new THREE.Matrix4(); let k = 0;
-    for (let z = 6; z > -LEN; z -= 16) {
+    for (let z = level.behind; z > -LEN; z -= 16) {
       for (const s of [-1, 1]) {
         const x = s * (R + WALK - .9), tz = z - (s > 0 ? 8 : 0);
         m.makeTranslation(x, 1.0, tz); trunk.setMatrixAt(k, m);

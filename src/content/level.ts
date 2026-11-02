@@ -12,12 +12,21 @@ export interface CourseItem {
   sign?: string;
 }
 
+/* The launch ramp behind the start line: a flat run-up then a curve up to the lip. */
+export interface RampDef {
+  run: number;      // flat run-up length (m)
+  height: number;   // height of the lip (m)
+  width: number;
+}
+
 export interface LevelDef {
   id: string;
+  ramp: RampDef;
   seed: number;          // drives the side buildings, coins and decoration
   roadHalf: number;      // half the road width
   walk: number;          // pavement width
   length: number;
+  behind: number;        // how far the street and buildings carry on behind the ramp lip (start area)
   alleyWidth: number;    // gap width through buildings
   busGapHalf: number;    // half the gap between the two buses
   coinSpacing: number;
@@ -26,10 +35,12 @@ export interface LevelDef {
 
 export const CITY: LevelDef = {
   id: 'toy-city',
+  ramp: { run: 9, height: 3.5, width: 7 },
   seed: 7,
   roadHalf: 9,
   walk: 3.2,
   length: 960,
+  behind: 60,
   alleyWidth: 3.8,
   busGapHalf: 1.5,
   coinSpacing: 14,

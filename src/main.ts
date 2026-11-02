@@ -1,7 +1,7 @@
 import './style.css';
 import { CITY } from './content/level';
 import { THEME } from './content/theme';
-import { registerServiceWorker, webStorage } from './platform/web';
+import { registerServiceWorker, webPlatform } from './platform/web';
 import { Game } from './presentation/game';
 import { loadSave } from './rules/save';
 
@@ -40,7 +40,8 @@ async function start() {
   applyTheme();
   registerServiceWorker();
   await fontsReady();
-  new Game(document.getElementById('stage')!, document.getElementById('c') as HTMLCanvasElement, CITY, loadSave(webStorage), webStorage);
+  new Game(document.getElementById('stage')!, document.getElementById('c') as HTMLCanvasElement,
+    document.getElementById('speed') as HTMLCanvasElement, CITY, loadSave(webPlatform.storage), webPlatform);
   started = true;
 }
 start().catch(showStartupError);

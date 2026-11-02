@@ -15,8 +15,9 @@ export class Catapult {
   private bands: THREE.Mesh[];
   private pouch = new THREE.Group();
 
-  constructor(scene: THREE.Scene) {
-    const base = new THREE.Group(); scene.add(base);
+  /* z0: the start line (where the car sits before a pull) */
+  constructor(scene: THREE.Scene, private z0: number) {
+    const base = new THREE.Group(); scene.add(base); base.position.z = z0;
     rbox(base, 6.4, .36, 5.2, .16, paint(hex(THEME.colors.blue)), 0, .18, 2.4);
     for (let i = 0; i < 3; i++) {
       const ch = slab(base, [['m', 0, 0], ['l', .6, .5], ['l', 0, 1.0], ['l', -.3, 1.0], ['l', .3, .5], ['l', -.3, 0], ['l', 0, 0]], .03, 0, paint(hex(THEME.colors.sun)), 0, .37, .4 + i * 1.25);
@@ -34,8 +35,8 @@ export class Catapult {
 
   /* Band hugs the back of the car while aiming; snaps forward once launched. */
   update(carPos: THREE.Vector3, carYaw: number, carRear: number, launched: boolean) {
-    const pc = launched ? V3(0, .4, carRear + .5) : V3(carPos.x, .4, carPos.z + carRear + .25);
+    const pc = launched ? V3(0, .4, this.z0 + carRear + .5) : V3(carPos.x, .4, carPos.z + carRear + .25);
     this.pouch.position.copy(pc); this.pouch.rotation.y = launched ? 0 : carYaw;
-    [-1, 1].forEach((s, i) => stretch(this.bands[i], V3(s * 2.3, 2.6, 3.3), V3(pc.x + s * .58, pc.y, pc.z)));
+    [-1, 1].forEach((s, i) => stretch(this.bands[i], V3(s * 2.3, 2.6, this.z0 + 3.3), V3(pc.x + s * .58, pc.y, pc.z)));
   }
 }

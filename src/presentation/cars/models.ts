@@ -11,6 +11,7 @@ export interface Mounts { halfW: number; wingY: number; wingZ: number; boostY: n
 
 export interface CarModel {
   group: THREE.Group;
+  body: THREE.Group;                 // everything but the wheels, so it can bounce on its suspension
   wheels: Wheel[];
   burnFlames: THREE.Object3D[];      // shown while a special burn is on (Flame Racer exhausts)
   mainFlame: THREE.Object3D | null;  // always-on engine flame (Rocket Rider)
@@ -20,7 +21,7 @@ export interface CarModel {
 }
 
 function newCar(): CarModel {
-  return { group: new THREE.Group(), wheels: [], burnFlames: [], mainFlame: null, boostFlames: [], upgrades: null,
+  return { group: new THREE.Group(), body: new THREE.Group(), wheels: [], burnFlames: [], mainFlame: null, boostFlames: [], upgrades: null,
     mounts: { halfW: 1, wingY: 1, wingZ: 0, boostY: 1, boostZ: 2, boostX: .5 } };
 }
 function addWheel(m: CarModel, x: number, y: number, z: number, r: number, w: number, rim: number, opts?: WheelOpts) {
@@ -258,6 +259,10 @@ export const MODELS: Record<string, () => CarModel> = {
 
 export function buildCar(model: string): CarModel {
   const m = MODELS[model]();
+  // move everything except the wheels into the body group
+  const wheels = new Set<THREE.Object3D>(m.wheels.map(w => w.group));
+  for (const c of [...m.group.children]) if (!wheels.has(c)) m.body.add(c);
+  m.group.add(m.body);
   m.group.traverse(o => { if ((o as THREE.Mesh).isMesh) o.castShadow = true; });
   return m;
 }

@@ -1,7 +1,7 @@
 // Offline support. Pages: try the network first so updates show straight away, fall back to cache.
 // Everything else (hashed assets, images, fonts): serve from cache, refresh in the background.
 // Bump VERSION to drop old caches after a big change.
-const VERSION = 'v3';
+const VERSION = 'v4';
 const CACHE = `launch-${VERSION}`;
 const SHELL = ['./', './index.html', './manifest.webmanifest'];
 

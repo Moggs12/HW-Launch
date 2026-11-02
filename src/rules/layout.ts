@@ -27,7 +27,7 @@ export function buildLayout(level: LevelDef): Layout {
   const side: SideBlock[] = [], back: Block[] = [], skyline: Block[] = [], clouds: Cloud[] = [];
 
   for (const s of [-1, 1] as const) {
-    let z = 20;
+    let z = level.behind;
     while (z > -LEN - 60) {
       const d = 9 + rnd() * 10, w = 10 + rnd() * 8, h = 9 + rnd() * 30, colour = Math.floor(rnd() * 10);
       side.push({ side: s, x: s * (sideX + w / 2), zc: z - d / 2, w, h, d, colour, z0: -z, z1: -(z - d) });

@@ -1,5 +1,6 @@
 import { CARS, carImage } from '../content/cars';
 import { SPECIALS } from '../content/specials';
+import { THEME } from '../content/theme';
 import { MAX_LEVEL, UPGRADES, type UpgradeKey } from '../content/upgrades';
 import { anyAffordable, canBuy, canUnlock, upgradeCost, upgradesDone, upgradesTotal, type RunResult } from '../rules/economy';
 import type { SaveData } from '../rules/save';
@@ -25,10 +26,16 @@ export interface GarageActions {
   testReset(): void;
 }
 
+export interface HomeActions {
+  start(): void;
+  muted(m: boolean): void;
+}
+
 /* Test mode: testing tools show and any car can be picked, locked or not.
-   On in dev builds, with ?test in the URL (any case), or by holding the car badge for 2 seconds
-   (works in the home-screen app too). Remembered on this device. */
+   On in dev builds, with ?test in the URL (any case), or by holding the car badge or the
+   home-screen logo for 2 seconds (works in the home-screen app too). Remembered on this device. */
 const TEST_KEY = 'launch-garage-test';
+const MUTE_KEY = 'launch-garage-muted';
 const HOLD_MS = 2000;
 function initialTestMode() {
   if (/test/i.test(location.search + location.hash)) { try { localStorage.setItem(TEST_KEY, '1'); } catch { /* ignore */ } return true; }
@@ -39,20 +46,52 @@ function initialTestMode() {
 export class Screens {
   testMode = initialTestMode();
 
-  constructor(private garage: GarageActions) {
+  muted = (() => { try { return localStorage.getItem(MUTE_KEY) === '1'; } catch { return false; } })();
+
+  constructor(private garage: GarageActions, homeActs: HomeActions) {
     $('closeGarage').addEventListener('click', () => this.closeGarage());
     $('unlockBtn').addEventListener('click', () => garage.unlock());
     $('testCoins').addEventListener('click', () => garage.testCoins());
     $('testMax').addEventListener('click', () => garage.testMax());
     $('testReset').addEventListener('click', () => garage.testReset());
     this.bindTestHold($('carPill'));
+    this.bindTestHold($('logo'));
     this.showTestMode();
+
+    const words = THEME.name.split(' ');
+    $('logo1').textContent = words[0];
+    $('logo2').textContent = words.slice(1).join(' ');
+    $('build').textContent = 'v' + __BUILD__;
+    $('startBtn').addEventListener('click', () => { this.hideHome(); homeActs.start(); });
+    $('soundBtn').addEventListener('click', () => {
+      this.muted = !this.muted;
+      try { localStorage.setItem(MUTE_KEY, this.muted ? '1' : '0'); } catch { /* ignore */ }
+      this.showMute(); homeActs.muted(this.muted);
+    });
+    this.showMute();
+  }
+
+  private showMute() {
+    $('soundBtn').classList.toggle('off', this.muted);
+    $('soundBtn').setAttribute('aria-label', this.muted ? 'Sound off' : 'Sound on');
   }
 
   private showTestMode() {
     $('tools').hidden = !this.testMode;
     $('testBadge').hidden = !this.testMode;
+    $('homeTest').hidden = !this.testMode;
   }
+
+  showHome(carIdx: number) {
+    $<HTMLImageElement>('homeCar').src = carImage(CARS[carIdx]);
+    document.body.classList.add('on-home');
+    $('home').hidden = false;
+  }
+  private hideHome() {
+    $('home').hidden = true;
+    document.body.classList.remove('on-home');
+  }
+  get homeOpen() { return !$('home').hidden; }
 
   private bindTestHold(el: HTMLElement) {
     let timer = 0;

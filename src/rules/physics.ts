@@ -1,6 +1,7 @@
 import type { CarDef } from '../content/cars';
 import type { CourseItem } from '../content/level';
 import type { SpecialEffect } from '../content/specials';
+import { rampPoint, type RampGeo } from './ramp';
 import type { UpgradeLevels } from './save';
 
 /* The flight of one launch. World axes: forward is -z, up is +y, ground is y = 0.
@@ -21,10 +22,11 @@ export const PHYSICS = {
   rollFriction: 14, rollFrictionPerWheel: 2.2,
   stopSpeed: .25,
   swerveTurnRate: 1.6,
+  rampStartShare: .5,         // the catapult flings the car up the ramp at this share of launch speed
 };
 
-export type ShotMode = 'air' | 'roll' | 'crash' | 'stop';
-export type ShotEvent = 'swerve' | 'burn' | 'armed' | 'zap' | 'bounce' | 'land' | 'stop';
+export type ShotMode = 'ramp' | 'air' | 'roll' | 'crash' | 'stop';
+export type ShotEvent = 'swerve' | 'burn' | 'armed' | 'zap' | 'takeoff' | 'bounce' | 'land' | 'stop';
 
 export interface Shot {
   lv: UpgradeLevels;
@@ -33,6 +35,13 @@ export interface Shot {
   vx: number; vy: number; vz: number;
   heading: number;            // radians, 0 = straight down the street, + = left
   mode: ShotMode;
+  ramp: RampGeo;
+  rampS: number;              // distance along the ramp surface
+  rampV: number;              // speed along the ramp
+  rampAccel: number;
+  launchSpeed: number;
+  pitch: number;              // nose-up angle while on the ramp
+  impact: number;             // downward speed of the last bounce/landing
   fuel: number;               // BOOST seconds left
   burn: number;               // special flame seconds left
   smash: boolean;             // next obstacle hit breaks instead of stopping us
@@ -50,15 +59,38 @@ export function launchSpeed(car: CarDef, lv: UpgradeLevels, power: number) {
   return (car.baseSpeed + P.enginePerLevel * lv.engine) * (P.minPowerFactor + (1 - P.minPowerFactor) * power);
 }
 
-export function makeShot(car: CarDef, lv: UpgradeLevels, special: SpecialEffect, power: number, heading: number): Shot {
-  const sp = launchSpeed(car, lv, power);
-  const h = sp * Math.cos(PHYSICS.launchAngle);
+/* A launch starts at the catapult (pulled back by pullBack metres) and runs up the ramp,
+   speeding up until it leaves the lip at launch speed. */
+export function makeShot(car: CarDef, lv: UpgradeLevels, special: SpecialEffect, power: number, heading: number,
+                         ramp: RampGeo, pullBack = 0): Shot {
+  const sp = launchSpeed(car, lv, power), v0 = sp * PHYSICS.rampStartShare;
+  const s0 = -pullBack, p = rampPoint(ramp, s0);
   return {
-    lv, special, x: 0, y: 0, z: 0,
-    vx: -Math.sin(heading) * h, vy: sp * Math.sin(PHYSICS.launchAngle), vz: -Math.cos(heading) * h,
-    heading, mode: 'air', fuel: PHYSICS.boostFuelPerLevel * lv.boost, burn: 0, smash: false, swerve: null,
+    lv, special, x: Math.sin(heading) * pullBack, y: p.y, z: p.z,
+    vx: 0, vy: 0, vz: -v0,
+    heading, mode: 'ramp', ramp, rampS: s0, rampV: v0, rampAccel: (sp * sp - v0 * v0) / (2 * (ramp.length - s0)),
+    launchSpeed: sp, pitch: 0, impact: 0,
+    fuel: PHYSICS.boostFuelPerLevel * lv.boost, burn: 0, smash: false, swerve: null,
     specialUsed: false, boosting: false, t: 0, events: [],
   };
+}
+
+function stepRamp(s: Shot, dt: number) {
+  const g = s.ramp;
+  s.rampV = Math.min(s.launchSpeed, s.rampV + s.rampAccel * dt);
+  s.rampS += s.rampV * dt;
+  if (s.rampS >= g.length) {
+    // take off from the lip, aimed where the player pulled
+    const h = s.launchSpeed * Math.cos(g.angle);
+    s.z = 0; s.y = g.height; s.pitch = g.angle;
+    s.vx = -Math.sin(s.heading) * h; s.vz = -Math.cos(s.heading) * h; s.vy = s.launchSpeed * Math.sin(g.angle);
+    s.mode = 'air';
+    s.events.push('takeoff');
+    return;
+  }
+  const p = rampPoint(g, s.rampS);
+  s.z = p.z; s.y = p.y; s.pitch = p.pitch;
+  s.vx = 0; s.vz = -s.rampV * Math.cos(p.pitch); s.vy = s.rampV * Math.sin(p.pitch);
 }
 
 export const distanceOf = (s: Shot) => -s.z;
@@ -69,7 +101,7 @@ export function nextBlocker(course: readonly CourseItem[], d: number) {
 
 /* Press the action button. Returns false if it can't be used now. */
 export function useSpecial(s: Shot, course: readonly CourseItem[]): boolean {
-  if (s.specialUsed || s.mode === 'stop' || s.mode === 'crash') return false;
+  if (s.specialUsed || s.mode === 'ramp' || s.mode === 'stop' || s.mode === 'crash') return false;
   s.specialUsed = true;
   const e = s.special;
   if (e.kind === 'swerve') {
@@ -108,6 +140,7 @@ export function stepShot(s: Shot, dt: number, inp: FlightInput | null) {
   const P = PHYSICS, lv = s.lv;
   s.t += dt; s.boosting = false;
   if (s.mode === 'stop') return;
+  if (s.mode === 'ramp') { stepRamp(s, dt); return; }
   steerSwerve(s, dt);
   const fx = -Math.sin(s.heading), fz = -Math.cos(s.heading);
   if (s.mode === 'air' || s.mode === 'crash') {
@@ -122,6 +155,7 @@ export function stepShot(s: Shot, dt: number, inp: FlightInput | null) {
     if (s.y <= 0) {
       s.y = 0;
       if (s.mode === 'crash') { s.vx = s.vz = s.vy = 0; s.mode = 'stop'; return; }
+      s.impact = -s.vy;
       if (s.vy < -P.bounceMinSpeed) {
         s.events.push('bounce');
         s.vy = -s.vy * (P.bounceBase + P.bouncePerWheel * lv.wheels);

@@ -18,7 +18,7 @@ export const UPGRADES: readonly UpgradeDef[] = [
 
 /* Coins earned per launch */
 export const REWARDS = {
-  perMetre: 1,
+  perMetre: 1.5,
   perCoin: 5,
-  minimum: 5,   // every launch earns something, even a crash at the start
+  minimum: 10,  // every launch earns something, even a crash at the start
 };

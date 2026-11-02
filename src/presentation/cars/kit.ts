@@ -90,7 +90,9 @@ export function lamp(g: THREE.Object3D, r: number, mat: THREE.Material, x: numbe
 export function plate(g: THREE.Object3D, text: string, x: number, y: number, z: number, w = .62) {
   const cv = document.createElement('canvas'); cv.width = 256; cv.height = 96;
   const c = cv.getContext('2d')!;
-  c.fillStyle = THEME.colors.sun; c.beginPath(); c.roundRect(4, 4, 248, 88, 14); c.fill();
+  c.fillStyle = THEME.colors.sun; c.beginPath();
+  if (c.roundRect) c.roundRect(4, 4, 248, 88, 14); else c.rect(4, 4, 248, 88);   // roundRect: Safari 16+
+  c.fill();
   c.strokeStyle = THEME.colors.ink; c.lineWidth = 6; c.stroke();
   c.fillStyle = THEME.colors.ink; c.font = '900 52px Nunito, Arial, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
   c.fillText(text, 128, 52);

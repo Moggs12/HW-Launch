@@ -24,7 +24,23 @@ async function fontsReady() {
   await Promise.race([Promise.all([document.fonts.load('40px "Luckiest Guy"'), document.fonts.load('900 40px Nunito')]), timeout]).catch(() => {});
 }
 
-applyTheme();
-registerServiceWorker();
-await fontsReady();
-new Game(document.getElementById('stage')!, document.getElementById('c') as HTMLCanvasElement, CITY, loadSave(webStorage), webStorage);
+/* If start-up fails, say so on screen (with the reason, for grown-ups) instead of a blank page. */
+function showStartupError(err: unknown) {
+  const box = document.getElementById('loading')!;
+  box.hidden = false;
+  box.classList.add('failed');
+  box.innerHTML = '<div>Oops! The city didn\'t load.<button class="btn" id="retryBtn">Try again</button><small></small></div>';
+  box.querySelector('small')!.textContent = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+  document.getElementById('retryBtn')!.addEventListener('click', () => location.reload());
+}
+let started = false;
+addEventListener('error', e => { if (!started) showStartupError(e.error ?? e.message); });
+
+async function start() {
+  applyTheme();
+  registerServiceWorker();
+  await fontsReady();
+  new Game(document.getElementById('stage')!, document.getElementById('c') as HTMLCanvasElement, CITY, loadSave(webStorage), webStorage);
+  started = true;
+}
+start().catch(showStartupError);

@@ -106,9 +106,12 @@ h4{margin:2px 0 -4px;font-family:var(--display);font-weight:400;font-size:20px;c
 .mini:disabled{cursor:default;border-color:#b9c3dc}
 .mini:disabled img{filter:grayscale(1) brightness(.35)}
 .mini em{position:absolute;top:22%;left:50%;transform:translateX(-50%);font-style:normal;font-family:var(--display);font-size:30px;color:var(--white)}
+.car-pill{pointer-events:auto;-webkit-touch-callout:none;touch-action:none}
+.car-pill.holding{transition:transform 2s linear;transform:scale(.92)}
+.test-badge{background:var(--ink);color:var(--sun);font:900 11px var(--body);letter-spacing:.08em;border-radius:8px;padding:3px 8px}
 .mini.peek{border-style:dashed}
 .mini .tag{position:absolute;top:2px;right:2px;font:900 9px var(--body);background:var(--ink);color:var(--white);border-radius:6px;padding:1px 4px}
-.tools{display:flex;gap:8px;flex-wrap:wrap;border-top:2px dashed #b9c3dc;padding-top:10px}
+.tools{display:flex;gap:8px;flex-wrap:wrap;border:2px dashed var(--muted);border-radius:14px;padding:10px;background:var(--white)}
 .tools span{font-size:12px;color:var(--muted);width:100%}
 .tools button{font:800 13px var(--body);background:var(--white);color:var(--ink);border:2px solid var(--muted);border-radius:10px;padding:6px 10px;cursor:pointer}
 .loading{position:absolute;inset:0;display:grid;place-items:center;font-family:var(--display);font-size:28px;color:var(--white);-webkit-text-stroke:1.5px var(--ink);pointer-events:none}

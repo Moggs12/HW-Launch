@@ -22,10 +22,11 @@
   <div class="loading" id="loading">Building the city…</div>
   <div class="hud">
     <div class="row">
-      <div class="pill"><img id="carImg" alt=""><div class="t"><small id="carTier">Car 1 of 6</small><b id="carName"></b></div></div>
+      <div class="pill car-pill" id="carPill"><img id="carImg" alt=""><div class="t"><small id="carTier">Car 1 of 6</small><b id="carName"></b></div></div>
       <div class="right">
         <div class="pill coins"><span class="cn" aria-hidden="true"></span><span id="coins">0</span></div>
         <div class="best">BEST <b id="best">—</b></div>
+        <div class="test-badge" id="testBadge" hidden>TEST MODE</div>
       </div>
     </div>
     <div class="bottom">
@@ -62,11 +63,11 @@
         <div class="pill coins"><span class="cn" aria-hidden="true"></span><span id="gCoins">0</span></div>
         <div class="prog"><div class="bar"><i id="gProg"></i></div><small id="gProgTxt"></small></div>
       </div>
+      <div class="tools" id="tools" hidden><span>TEST MODE: pick any car below (locked ones are marked TEST). Hold the car badge (top left) for 2 seconds to turn test mode off.</span><button id="testCoins">+1,000 coins</button><button id="testMax">Max this car</button><button id="testReset">Start over</button></div>
       <div id="upgList" class="upg-list"></div>
       <button class="btn unlock" id="unlockBtn" hidden>Unlock!</button>
       <h4>Your cars</h4>
       <div class="cars" id="carList"></div>
-      <div class="tools" id="tools" hidden><span>Testing tools (dev builds or ?test in the URL). Locked cars marked TEST can be tried out.</span><button id="testCoins">+1,000 coins</button><button id="testMax">Max this car</button><button id="testReset">Start over</button></div>
     </div>
   </div>
 </div>

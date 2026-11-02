@@ -60,6 +60,7 @@ export class Game {
     this.dots.count = 0; this.st.scene.add(this.dots);
 
     this.screens = new Screens({
+      refresh: () => this.refreshAll(),
       buy: key => {
         if (!buyUpgrade(this.save, this.carIdx, key)) return;
         this.persist(); fitUpgrades(this.car, this.save.levels[this.carIdx], CARS[this.carIdx].accent); this.refreshAll();

@@ -16,6 +16,7 @@ const ICONS: Record<UpgradeKey, string> = {
 };
 
 export interface GarageActions {
+  refresh(): void;
   buy(key: UpgradeKey): void;
   pickCar(i: number): void;
   unlock(): void;
@@ -24,9 +25,19 @@ export interface GarageActions {
   testReset(): void;
 }
 
+/* Test mode: testing tools show and any car can be picked, locked or not.
+   On in dev builds, with ?test in the URL (any case), or by holding the car badge for 2 seconds
+   (works in the home-screen app too). Remembered on this device. */
+const TEST_KEY = 'launch-garage-test';
+const HOLD_MS = 2000;
+function initialTestMode() {
+  if (/test/i.test(location.search + location.hash)) { try { localStorage.setItem(TEST_KEY, '1'); } catch { /* ignore */ } return true; }
+  try { const v = localStorage.getItem(TEST_KEY); if (v) return v === '1'; } catch { /* ignore */ }
+  return import.meta.env.DEV;
+}
+
 export class Screens {
-  /* testing mode (dev builds or ?test): testing tools show and any car can be picked, locked or not */
-  readonly testMode = import.meta.env.DEV || new URLSearchParams(location.search).has('test');
+  testMode = initialTestMode();
 
   constructor(private garage: GarageActions) {
     $('closeGarage').addEventListener('click', () => this.closeGarage());
@@ -34,7 +45,31 @@ export class Screens {
     $('testCoins').addEventListener('click', () => garage.testCoins());
     $('testMax').addEventListener('click', () => garage.testMax());
     $('testReset').addEventListener('click', () => garage.testReset());
+    this.bindTestHold($('carPill'));
+    this.showTestMode();
+  }
+
+  private showTestMode() {
     $('tools').hidden = !this.testMode;
+    $('testBadge').hidden = !this.testMode;
+  }
+
+  private bindTestHold(el: HTMLElement) {
+    let timer = 0;
+    const cancel = () => { clearTimeout(timer); el.classList.remove('holding'); };
+    el.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      el.classList.add('holding');
+      timer = window.setTimeout(() => {
+        cancel();
+        this.testMode = !this.testMode;
+        try { localStorage.setItem(TEST_KEY, this.testMode ? '1' : '0'); } catch { /* ignore */ }
+        this.showTestMode();
+        this.garage.refresh();
+      }, HOLD_MS);
+    });
+    for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) el.addEventListener(ev, cancel);
+    el.addEventListener('contextmenu', e => e.preventDefault());
   }
 
   doneLoading() { $('loading').hidden = true; }

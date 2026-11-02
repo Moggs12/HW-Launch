@@ -25,14 +25,16 @@ export interface GarageActions {
 }
 
 export class Screens {
+  /* testing mode (dev builds or ?test): testing tools show and any car can be picked, locked or not */
+  readonly testMode = import.meta.env.DEV || new URLSearchParams(location.search).has('test');
+
   constructor(private garage: GarageActions) {
     $('closeGarage').addEventListener('click', () => this.closeGarage());
     $('unlockBtn').addEventListener('click', () => garage.unlock());
     $('testCoins').addEventListener('click', () => garage.testCoins());
     $('testMax').addEventListener('click', () => garage.testMax());
     $('testReset').addEventListener('click', () => garage.testReset());
-    const showTools = import.meta.env.DEV || new URLSearchParams(location.search).has('test');
-    $('tools').hidden = !showTools;
+    $('tools').hidden = !this.testMode;
   }
 
   doneLoading() { $('loading').hidden = true; }
@@ -112,9 +114,10 @@ export class Screens {
     const cl = $('carList'); cl.innerHTML = '';
     CARS.forEach((c, i) => {
       const b = document.createElement('button'); b.className = 'mini'; b.id = 'mini-' + i;
-      const locked = i >= save.unlocked;
-      b.disabled = locked; b.setAttribute('aria-pressed', String(i === carIdx));
-      b.innerHTML = `<img alt="" src="${carImage(c)}"><span>${locked ? 'Locked' : c.name}</span>${locked ? '<em aria-hidden="true">?</em>' : ''}`;
+      const locked = i >= save.unlocked, peek = locked && this.testMode;
+      b.disabled = locked && !peek; b.setAttribute('aria-pressed', String(i === carIdx));
+      if (peek) b.classList.add('peek');
+      b.innerHTML = `<img alt="" src="${carImage(c)}"><span>${locked && !peek ? 'Locked' : c.name}</span>${locked && !peek ? '<em aria-hidden="true">?</em>' : ''}${peek ? '<b class="tag">TEST</b>' : ''}`;
       b.addEventListener('click', () => this.garage.pickCar(i));
       cl.appendChild(b);
     });

@@ -1,8 +1,14 @@
-/* All the game sounds and the music, made on the fly with Web Audio (no sound files to load).
-   Browsers only allow sound after a tap, so unlock() is called from the Start button.
+/* All the game sounds and the music. Impacts, clicks and power-ups are short recorded samples
+   (public/sfx, from Kenney's CC0 packs); everything else is made on the fly with Web Audio, which
+   also stands in for any sample that hasn't loaded. Browsers only allow sound after a tap, so
+   unlock() is called from the Start button.
    Signal path: sounds -> fx bus (+ a little room reverb) -> master (compressor) -> speakers;
    music -> music bus -> master. */
 type Ctx = AudioContext;
+
+const SAMPLES = ['crash-metal-0', 'crash-metal-1', 'crash-metal-2', 'crash-plate-0', 'crash-plate-1',
+  'smash-wood-0', 'smash-wood-1', 'smash-glass-0', 'smash-glass-1', 'land-soft-0', 'land-soft-1', 'land-soft-2',
+  'land-hard-0', 'land-hard-1', 'tick', 'click', 'powerup-0', 'powerup-1', 'zap'];
 
 const BPM = 118, EIGHTH = 60 / BPM / 2;
 const midi = (n: number) => 440 * Math.pow(2, (n - 69) / 12);
@@ -29,6 +35,7 @@ export class Sound {
   private engine: { osc: OscillatorNode; osc2: OscillatorNode; sub: OscillatorNode; filter: BiquadFilterNode; gain: GainNode } | null = null;
   private wind: { gain: GainNode; filter: BiquadFilterNode } | null = null;
   private boost: { gain: GainNode } | null = null;
+  private samples = new Map<string, AudioBuffer>();
   private step = 0;
   private nextNote = 0;
   muted = false;
@@ -54,6 +61,7 @@ export class Sound {
       this.music = ctx.createGain(); this.music.gain.value = 0; this.music.connect(this.master);
       const musicVerb = ctx.createGain(); musicVerb.gain.value = .5; this.music.connect(musicVerb); musicVerb.connect(verb);
       this.startLoops();
+      this.loadSamples();
       this.nextNote = ctx.currentTime + .1;
       setInterval(() => this.schedule(), 25);
       document.addEventListener('visibilitychange', () => {
@@ -62,6 +70,28 @@ export class Sound {
       });
     }
     if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {});
+  }
+
+  private loadSamples() {
+    const ctx = this.ctx!;
+    for (const name of SAMPLES) {
+      fetch(`sfx/${name}.wav`).then(r => r.arrayBuffer())
+        .then(b => new Promise<AudioBuffer>((ok, fail) => ctx.decodeAudioData(b, ok, fail)))   // callback form for older Safari
+        .then(buf => { this.samples.set(name, buf); })
+        .catch(() => { /* the made-in-code sound covers it */ });
+    }
+  }
+
+  /* play a random take of a sample ("crash-metal" picks crash-metal-0/1/2); false if none loaded */
+  private sample(prefix: string, vol: number, when = 0, rate = 1) {
+    if (!this.ctx) return false;
+    const takes = SAMPLES.filter(n => n === prefix || n.startsWith(prefix + '-')).map(n => this.samples.get(n)).filter(Boolean) as AudioBuffer[];
+    if (!takes.length) return false;
+    const ctx = this.ctx, src = ctx.createBufferSource(), g = ctx.createGain();
+    src.buffer = takes[Math.floor(Math.random() * takes.length)];
+    src.playbackRate.value = rate * (.94 + Math.random() * .12);   // a little variety every time
+    g.gain.value = vol; src.connect(g); g.connect(this.fx); src.start(ctx.currentTime + when);
+    return true;
   }
 
   private impulse(secs: number) {
@@ -198,16 +228,27 @@ export class Sound {
   twang() { this.tone(180, .35, 'triangle', .3, 0, 60); this.tone(90, .3, 'sine', .3, 0, 50); this.burst(.15, .25, 'lowpass', 2000, 300); }
   whoosh() { this.burst(.8, .55, 'bandpass', 250, 2600); this.burst(.5, .2, 'highpass', 3000, 6000, .05); }
   coin() { this.tone(1976, .1, 'square', .05); this.tone(1976, .12, 'sine', .15); this.tone(2637, .35, 'sine', .16, .07); this.tone(2637, .25, 'square', .03, .07); }
-  tick() { this.tone(2200, .025, 'square', .035); }
-  pop() { this.tone(500, .09, 'sine', .25, 0, 1100); }
-  thud(strength = .5) { this.tone(110, .25, 'sine', .3 + strength * .4, 0, 40); this.burst(.14, .2 * strength, 'lowpass', 900, 150); }
-  crash() {
-    this.burst(.8, .7, 'lowpass', 3000, 180); this.tone(85, .5, 'sine', .55, 0, 32);
-    this.burst(.35, .3, 'highpass', 4000, 1500, .05); this.clank(.18, .02); this.clank(.1, .15);
+  tick() { if (!this.sample('tick', .5)) this.tone(2200, .025, 'square', .035); }
+  pop() { if (!this.sample('click', .7)) this.tone(500, .09, 'sine', .25, 0, 1100); }
+  thud(strength = .5) {
+    this.tone(110, .25, 'sine', .2 + strength * .3, 0, 40);   // low body under the sample
+    if (!this.sample(strength > .5 ? 'land-hard' : 'land-soft', .5 + strength * .6)) this.burst(.14, .2 * strength, 'lowpass', 900, 150);
   }
-  smash() { this.burst(.7, .6, 'lowpass', 2500, 220); this.tone(70, .45, 'sine', .5, 0, 30); for (let i = 0; i < 5; i++) this.burst(.12, .15, 'bandpass', 1500 + Math.random() * 2000, 600, .08 + i * .07); }
-  zap() { this.burst(.5, .55, 'highpass', 6000, 1500); this.tone(1200, .3, 'sawtooth', .12, 0, 80); this.tone(60, .6, 'sine', .4, .05, 30); }
-  powerUp() { this.tone(400, .25, 'square', .08, 0, 1200); this.tone(600, .25, 'triangle', .15, .05, 1800); }
+  crash() {
+    this.tone(85, .5, 'sine', .5, 0, 32);
+    if (this.sample('crash-metal', 1) && this.sample('crash-plate', .9, .03)) { this.burst(.5, .35, 'lowpass', 2500, 180); return; }
+    this.burst(.8, .7, 'lowpass', 3000, 180); this.burst(.35, .3, 'highpass', 4000, 1500, .05); this.clank(.18, .02); this.clank(.1, .15);
+  }
+  smash() {
+    this.tone(70, .45, 'sine', .5, 0, 30);
+    if (this.sample('smash-wood', 1, 0, .85) && this.sample('smash-glass', .8, .04)) { this.burst(.5, .35, 'lowpass', 2200, 220); return; }
+    this.burst(.7, .6, 'lowpass', 2500, 220); for (let i = 0; i < 5; i++) this.burst(.12, .15, 'bandpass', 1500 + Math.random() * 2000, 600, .08 + i * .07);
+  }
+  zap() {
+    this.tone(60, .6, 'sine', .4, .05, 30);
+    if (!this.sample('zap', .8)) { this.burst(.5, .55, 'highpass', 6000, 1500); this.tone(1200, .3, 'sawtooth', .12, 0, 80); }
+  }
+  powerUp() { if (!this.sample('powerup', .7)) { this.tone(400, .25, 'square', .08, 0, 1200); this.tone(600, .25, 'triangle', .15, .05, 1800); } }
   chime() { this.tone(880, .2, 'triangle', .22); this.tone(1320, .35, 'triangle', .2, .08); this.tone(1760, .4, 'sine', .1, .16); }
   tada() { [523, 659, 784, 1047].forEach((f, i) => { this.tone(f, .35, 'triangle', .2, i * .09); this.tone(f * 2, .2, 'sine', .05, i * .09); }); }
   fanfare() { [523, 659, 784, 1047, 784, 1047].forEach((f, i) => { this.tone(f, .4, 'square', .08, i * .12); this.tone(f, .45, 'triangle', .18, i * .12); }); }

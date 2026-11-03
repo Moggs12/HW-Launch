@@ -12,7 +12,7 @@ export class Effects {
   private parts: Particle[] = [];
   private puffGeo = new THREE.SphereGeometry(1, 12, 8);
   private starGeo = new THREE.OctahedronGeometry(.25);
-  private boltMat = new THREE.MeshBasicMaterial({ color: 0xcfeaff, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
+  private boltMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0xcfeaff).multiplyScalar(10), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
   private bolt: { g: THREE.Group; t: number } | null = null;
   shake = 0;
 
@@ -22,7 +22,7 @@ export class Effects {
     for (let i = 0; i < n; i++) {
       const mat = kind === 'dust' ? new THREE.MeshLambertMaterial({ color: 0xe8e2d4, transparent: true, opacity: .8, depthWrite: false })
         : kind === 'star' ? new THREE.MeshBasicMaterial({ color: [0xffd21f, 0xffffff, 0xff7a1a][i % 3], transparent: true })
-        : kind === 'spark' ? new THREE.MeshBasicMaterial({ color: 0x9fd8ff, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false })
+        : kind === 'spark' ? new THREE.MeshBasicMaterial({ color: new THREE.Color(0x9fd8ff).multiplyScalar(8), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false })
         : new THREE.MeshStandardMaterial({ color: [0xff8a65, 0xffc94d, 0x7fc8f8][i % 3], roughness: .7, transparent: true });
       const m = new THREE.Mesh(kind === 'dust' ? this.puffGeo : this.starGeo, mat); m.position.copy(pos);
       const a = Math.random() * Math.PI * 2, up = kind === 'dust' ? .5 + Math.random() : 3 + Math.random() * 5;

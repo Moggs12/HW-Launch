@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { THEME } from '../../content/theme';
 
 /* Building blocks for the procedural toy cars.
@@ -102,17 +103,18 @@ export function plate(g: THREE.Object3D, text: string, x: number, y: number, z: 
 }
 
 export interface Wheel { group: THREE.Group; spin: THREE.Group; rims: THREE.Mesh[]; r: number }
-export interface WheelOpts { rimRatio?: number; tread?: number; spokes?: number }
+export interface WheelOpts { rimRatio?: number; tread?: number; spokes?: number; seg?: number }   // seg: roundness (lower for background cars)
 
 /* rounded tyre + spoked rim. Axis along x. */
 export function makeWheel(r: number, w: number, rimColor: number, opts: WheelOpts = {}): Wheel {
   const outer = new THREE.Group(), spin = new THREE.Group(); outer.add(spin);
-  const ri = r * (opts.rimRatio ?? .6), e = Math.min(r * .28, w * .32);
+  const ri = r * (opts.rimRatio ?? .6), e = Math.min(r * .28, w * .32), seg = opts.seg ?? 48;
   const pts: [number, number][] = [[ri * .98, -w / 2 + .01]];
-  for (let i = 0; i <= 8; i++) { const a = i / 8 * Math.PI / 2; pts.push([r - e + Math.sin(a) * e, -w / 2 + e - Math.cos(a) * e]); }
-  for (let i = 0; i <= 8; i++) { const a = i / 8 * Math.PI / 2; pts.push([r - e + Math.cos(a) * e, w / 2 - e + Math.sin(a) * e]); }
+  const rs = seg < 30 ? 3 : 8;
+  for (let i = 0; i <= rs; i++) { const a = i / rs * Math.PI / 2; pts.push([r - e + Math.sin(a) * e, -w / 2 + e - Math.cos(a) * e]); }
+  for (let i = 0; i <= rs; i++) { const a = i / rs * Math.PI / 2; pts.push([r - e + Math.cos(a) * e, w / 2 - e + Math.sin(a) * e]); }
   pts.push([ri * .98, w / 2 - .01]);
-  const tyre = finish(lathe(pts, MAT.rubber(), 48)); tyre.rotation.z = Math.PI / 2; spin.add(tyre);
+  const tyre = finish(lathe(pts, MAT.rubber(), seg)); tyre.rotation.z = Math.PI / 2; spin.add(tyre);
   if (opts.tread) {
     const n = opts.tread, lug = new THREE.BoxGeometry(w * .8, r * .07, r * .14);
     for (let i = 0; i < n; i++) {
@@ -123,9 +125,9 @@ export function makeWheel(r: number, w: number, rimColor: number, opts: WheelOpt
   const rimMat = paint(rimColor, { metalness: .55, roughness: .25 });
   const rims: THREE.Mesh[] = [];
   for (const s of [-1, 1]) {
-    const dish = finish(new THREE.Mesh(new THREE.CylinderGeometry(ri * .98, ri * .98, .04, 36), MAT.dark()));
+    const dish = finish(new THREE.Mesh(new THREE.CylinderGeometry(ri * .98, ri * .98, .04, Math.round(seg * .75)), MAT.dark()));
     dish.rotation.z = Math.PI / 2; dish.position.x = s * (w / 2 - .08); spin.add(dish);
-    const lip = finish(new THREE.Mesh(new THREE.TorusGeometry(ri * .93, ri * .07, 10, 40), rimMat));
+    const lip = finish(new THREE.Mesh(new THREE.TorusGeometry(ri * .93, ri * .07, seg < 30 ? 5 : 10, Math.round(seg * .83)), rimMat));
     lip.rotation.y = Math.PI / 2; lip.position.x = s * (w / 2 - .04); spin.add(lip); rims.push(lip);
     const spokes = opts.spokes ?? 5;
     for (let i = 0; i < spokes; i++) {
@@ -133,7 +135,7 @@ export function makeWheel(r: number, w: number, rimColor: number, opts: WheelOpt
       const sp = finish(new THREE.Mesh(new THREE.BoxGeometry(.05, ri * .82, ri * .2), rimMat));
       sp.position.set(s * (w / 2 - .05), Math.cos(a) * ri * .45, Math.sin(a) * ri * .45); sp.rotation.x = -a; spin.add(sp); rims.push(sp);
     }
-    const cap = finish(new THREE.Mesh(new THREE.CylinderGeometry(ri * .22, ri * .26, .08, 24), MAT.chrome()));
+    const cap = finish(new THREE.Mesh(new THREE.CylinderGeometry(ri * .22, ri * .26, .08, Math.round(seg / 2)), MAT.chrome()));
     cap.rotation.z = Math.PI / 2; cap.position.x = s * (w / 2 - .02); spin.add(cap);
   }
   return { group: outer, spin, rims, r };
@@ -142,10 +144,63 @@ export function makeWheel(r: number, w: number, rimColor: number, opts: WheelOpt
 /* engine glow flame (for boost + rocket) pointing +z */
 export function flameCone(g: THREE.Object3D, r: number, len: number, x: number, y: number, z: number) {
   const grp = new THREE.Group(); grp.position.set(x, y, z);
-  const flameMat = (color: number, opacity: number) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+  const flameMat = (color: number, opacity: number) => new THREE.MeshBasicMaterial({ color: new THREE.Color(color).multiplyScalar(6), transparent: true, opacity, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
   const outer = new THREE.Mesh(new THREE.ConeGeometry(r, len, 20, 1, true), flameMat(0xff7a1a, .75));
   outer.rotation.x = Math.PI / 2; outer.position.z = len / 2; grp.add(outer);
   const inner = new THREE.Mesh(new THREE.ConeGeometry(r * .55, len * .62, 16, 1, true), flameMat(0xfff2a0, .95));
   inner.rotation.x = Math.PI / 2; inner.position.z = len * .31; grp.add(inner);
   g.add(grp); return grp;
+}
+
+/* Bake every plain mesh under root (except the kept subtrees, e.g. flames that switch on and off)
+   into one mesh per material. Same look, far fewer draw calls. Returns the merged mesh for each material. */
+export function mergeStatic(root: THREE.Object3D, keep: Iterable<THREE.Object3D | null> = []) {
+  const skip = new Set<THREE.Object3D | null>(keep);
+  root.updateMatrixWorld(true);
+  const inv = root.matrixWorld.clone().invert(), rel = new THREE.Matrix4();
+  const sets = new Map<THREE.Material, { geos: THREE.BufferGeometry[]; cast: boolean; recv: boolean }>();
+  const victims: THREE.Mesh[] = [];
+  const walk = (o: THREE.Object3D) => {
+    if (skip.has(o)) return;
+    const m = o as THREE.Mesh;
+    if (m.isMesh && !(o as THREE.InstancedMesh).isInstancedMesh && !Array.isArray(m.material) && o.visible) {
+      const mat = m.material as THREE.Material, colours = !!(mat as THREE.MeshStandardMaterial).vertexColors;
+      let g = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone();
+      for (const k of Object.keys(g.attributes)) if (!(k === 'position' || k === 'normal' || k === 'uv' || (colours && k === 'color'))) g.deleteAttribute(k);
+      const n = g.attributes.position.count;
+      if (!g.attributes.normal) g.computeVertexNormals();
+      if (!g.attributes.uv) g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(n * 2), 2));
+      if (colours && !g.attributes.color) g.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(n * 3).fill(1), 3));
+      g.clearGroups(); g.morphAttributes = {};
+      rel.multiplyMatrices(inv, o.matrixWorld);
+      g.applyMatrix4(rel);
+      if (rel.determinant() < 0) flipWinding(g);
+      let set = sets.get(mat); if (!set) sets.set(mat, set = { geos: [], cast: false, recv: false });
+      set.geos.push(g); set.cast ||= o.castShadow; set.recv ||= o.receiveShadow;
+      victims.push(m);
+    }
+    for (const c of [...o.children]) walk(c);
+  };
+  walk(root);
+  for (const v of victims) {
+    for (const c of [...v.children]) if (!victims.includes(c as THREE.Mesh)) v.parent!.attach(c);
+    v.parent!.remove(v);
+  }
+  const out = new Map<THREE.Material, THREE.Mesh>();
+  for (const [mat, set] of sets) {
+    const merged = new THREE.Mesh(set.geos.length === 1 ? set.geos[0] : mergeGeometries(set.geos), mat);
+    merged.castShadow = set.cast; merged.receiveShadow = set.recv;
+    root.add(merged); out.set(mat, merged);
+    if (set.geos.length > 1) set.geos.forEach(g => g.dispose());
+  }
+  return out;
+}
+
+function flipWinding(g: THREE.BufferGeometry) {
+  for (const a of Object.values(g.attributes) as THREE.BufferAttribute[]) {
+    const s = a.itemSize, arr = a.array;
+    for (let i = 0; i < a.count; i += 3) for (let k = 0; k < s; k++) {
+      const p = (i + 1) * s + k, q = (i + 2) * s + k, t = arr[p]; arr[p] = arr[q]; arr[q] = t;
+    }
+  }
 }

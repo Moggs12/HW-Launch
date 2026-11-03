@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { MAX_LEVEL } from '../../content/upgrades';
 import type { UpgradeLevels } from '../../rules/save';
-import { MAT, V3, cyl, finish, flameCone, lathe, mesh, orient, paint, rbox, slab, sphere } from './kit';
+import { MAT, V3, cyl, finish, flameCone, lathe, mergeStatic, mesh, orient, paint, rbox, slab, sphere } from './kit';
 import type { CarModel } from './models';
 
 /* What upgrades look like on the car: wings, booster tanks, bigger (and finally gold) wheels. */
@@ -33,6 +33,7 @@ export function fitUpgrades(m: CarModel, lv: UpgradeLevels, accent: number) {
       const f = flameCone(u, .18, 1.0, x, y, z + len / 2 + .22); f.visible = false; m.boostFlames.push(f);
     }
   }
+  mergeStatic(u, m.boostFlames);
   const gold = lv.wheels >= MAX_LEVEL;
   for (const w of m.wheels) {
     for (const r of w.rims) {

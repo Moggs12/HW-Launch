@@ -17,11 +17,12 @@ import { Catapult } from './catapult';
 import { buildCity, type CityView } from './city';
 import { Effects } from './effects';
 import { buildRamp } from './ramp';
+import { Post } from './post';
 import { createStage, followWithSun, type Stage3D } from './scene';
 import { Screens } from './screens';
 import { Sound } from './sound';
 import { SpeedLines } from './speedLines';
-import { setMaxAnisotropy } from './textures';
+import { canvasTex, setMaxAnisotropy } from './textures';
 
 /* Glue: input -> rules -> 3D + screens + sound. Owns the home / aim / pull / fly / result loop. */
 type State = 'home' | 'aim' | 'pulling' | 'flying' | 'result';
@@ -41,6 +42,8 @@ export class Game {
   private sound = new Sound();
   private lines: SpeedLines;
   private dots: THREE.InstancedMesh;
+  private post: Post;
+  private blob: THREE.Mesh;          // soft round shadow under the car, so you can judge its height
   private clock = new THREE.Clock();
 
   private state: State = 'home';
@@ -59,6 +62,7 @@ export class Game {
               level: LevelDef, private save: SaveData, private platform: Platform) {
     this.st = createStage(canvas);
     setMaxAnisotropy(this.st.renderer.capabilities.getMaxAnisotropy());
+    this.post = new Post(this.st.renderer, this.st.scene, this.st.camera);
     this.world = buildWorld(level);
     this.cam = new ChaseCamera(this.st.camera, this.world.ramp.startZ);
     this.city = buildCity(this.st.scene, this.world);
@@ -68,20 +72,28 @@ export class Game {
     this.lines = new SpeedLines(speedCanvas);
     this.dots = new THREE.InstancedMesh(new THREE.SphereGeometry(.14, 10, 8), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: .9 }), PREDICT_DOTS);
     this.dots.count = 0; this.st.scene.add(this.dots);
+    const blobTex = canvasTex(64, 64, (c, w) => {
+      const g = c.createRadialGradient(w / 2, w / 2, 0, w / 2, w / 2, w / 2);
+      g.addColorStop(0, 'rgba(10,15,40,.9)'); g.addColorStop(.55, 'rgba(10,15,40,.45)'); g.addColorStop(1, 'rgba(10,15,40,0)');
+      c.fillStyle = g; c.fillRect(0, 0, w, w);
+    });
+    this.blob = new THREE.Mesh(new THREE.PlaneGeometry(2.8, 4.6), new THREE.MeshBasicMaterial({ map: blobTex, transparent: true, depthWrite: false, opacity: .5 }));
+    this.blob.renderOrder = 1; this.st.scene.add(this.blob);
+    if (import.meta.env.DEV) (window as unknown as { __game: Game }).__game = this;
 
     this.screens = new Screens({
       refresh: () => this.refreshAll(),
       buy: key => {
         if (!buyUpgrade(this.save, this.carIdx, key)) return;
         this.persist(); fitUpgrades(this.car, this.save.levels[this.carIdx], CARS[this.carIdx].accent); this.refreshAll();
-        this.sound.chime(); this.buzz('light');
+        this.screens.flashUpgrade(key); this.sound.chime(); this.buzz('light');
       },
       pickCar: i => { this.save.car = i; this.persist(); this.loadCar(i); this.refreshAll(); this.buzz('light'); },
       unlock: () => {
         if (!unlockNext(this.save)) return;
         this.persist(); this.loadCar(this.save.car); this.refreshAll();
         this.fx.spawn('star', V3(0, 2, this.world.ramp.startZ), 30);
-        this.sound.fanfare(); this.buzz('heavy');
+        this.screens.celebrate(); this.sound.fanfare(); this.buzz('heavy');
       },
       testCoins: () => { this.save.coins += 1000; this.persist(); this.refreshAll(); },
       testMax: () => {
@@ -94,6 +106,7 @@ export class Game {
       muted: m => this.sound.setMuted(m),
     });
 
+    this.screens.sfx = k => { if (k === 'tick') this.sound.tick(); else if (k === 'coin') this.sound.coin(); else this.sound.pop(); };
     this.bindInput(canvas);
     new ResizeObserver(() => this.resize()).observe(stage); this.resize();
     this.loadCar(this.screens.testMode ? save.car : Math.min(save.car, save.unlocked - 1));
@@ -197,6 +210,11 @@ export class Game {
     });
     addEventListener('keyup', e => { if (e.code === 'Space') this.inp.boost = false; });
 
+    // a soft pop on every button press (the flight buttons make their own noises)
+    document.addEventListener('pointerdown', e => {
+      const b = (e.target as Element).closest('button');
+      if (b && !b.disabled && b.id !== 'boostBtn' && b.id !== 'specialBtn') this.sound.pop();
+    });
     document.getElementById('garageBtn')!.addEventListener('click', () => { if (this.state === 'aim') this.screens.openGarage(this.save, this.carIdx); });
     document.getElementById('againBtn')!.addEventListener('click', () => this.resetShot());
     document.getElementById('resGarage')!.addEventListener('click', () => { this.resetShot(); this.screens.openGarage(this.save, this.carIdx); });
@@ -219,9 +237,10 @@ export class Game {
   private finishRun() {
     const run = this.run!;
     this.state = 'result';
+    const before = this.save.coins;
     const r = recordRun(this.save, this.carIdx, -run.shot.z, run.coinsGrabbed);
     this.persist();
-    this.screens.result(r, run.crashed, run.coinsGrabbed);
+    this.screens.result(r, run.crashed, run.coinsGrabbed, before);
     this.screens.hud(this.save, this.carIdx);
     this.sound.tada();
   }
@@ -307,29 +326,43 @@ export class Game {
     const flyingNow = this.state === 'flying' && !!s && s.mode === 'air';
     this.sound.setWind(flyingNow ? clamp01(Math.hypot(s!.vx, s!.vy, s!.vz) / 50) : 0);
     this.sound.setBoost(this.state === 'flying' && !!s?.boosting);
+    this.sound.setMusic(this.state === 'flying' ? .35 : this.state === 'home' ? 1 : .7);
+  }
+
+  /* round shadow on the ground (or the ramp) under the car; fades and spreads as it climbs */
+  private placeBlob() {
+    const p = this.car.group.position, s = this.run?.shot;
+    const onRamp = !!s && s.mode === 'ramp' && this.state === 'flying';
+    const ground = onRamp ? s!.y : 0, h = Math.max(0, p.y - ground);
+    this.blob.position.set(p.x, ground + .05, p.z);
+    this.blob.rotation.set(-Math.PI / 2 + (onRamp ? s!.pitch : 0), this.car.group.rotation.y, 0, 'YXZ');
+    this.blob.scale.setScalar(1 + h * .05);
+    (this.blob.material as THREE.MeshBasicMaterial).opacity = .5 * Math.max(0, 1 - h / 35);
   }
 
   private frame = () => {
-    const dt = Math.min(this.clock.getDelta(), .05), now = this.clock.elapsedTime;
+    const raw = this.clock.getDelta(), dt = Math.min(raw, .05), now = this.clock.elapsedTime;
     if (this.state === 'flying' && this.run) this.stepFlight(dt, now);
     else if (this.car.mainFlame) this.car.mainFlame.scale.set(.75, .75, .6 + Math.random() * .15);
     this.stepSuspension(dt);
     this.stepSound();
     this.city.coins.forEach((c, i) => { if (c.visible) c.rotation.y = now * 2.4 + i * .3; });
+    this.city.updateCoins();
     this.fx.tick(dt);
     const s = this.run?.shot;
     const flying = (this.state === 'flying' || this.state === 'result') && !!s;
     const speed = s ? (s.mode === 'ramp' ? s.rampV : Math.hypot(s.vx, s.vz)) : 0;
     this.cam.update(dt, flying, this.car.group.position, s?.heading ?? 0, speed, this.fx.shake);
     this.lines.draw(dt, this.state === 'flying' && s && s.mode !== 'stop' && s.mode !== 'crash' ? clamp01((speed - 12) / 40) : 0);
+    this.placeBlob();
     followWithSun(this.st, this.car.group.position);
-    this.st.renderer.render(this.st.scene, this.st.camera);
+    this.post.render(raw);
     requestAnimationFrame(this.frame);
   };
 
   private resize() {
     const w = this.stage.clientWidth, h = this.stage.clientHeight;
-    this.st.renderer.setSize(w, h, false);
+    this.post.resize(w, h);
     this.cam.resize(w, h);
     this.lines.resize(w, h);
   }

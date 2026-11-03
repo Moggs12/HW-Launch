@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import {
-  MAT, V3, cyl, flameCone, lamp, lathe, finish, makeWheel, mesh, orient, paint, plate, rbox, slab, sphere, tube,
+  MAT, V3, cyl, flameCone, lamp, lathe, finish, makeWheel, mergeStatic, mesh, orient, paint, plate, rbox, slab, sphere, tube,
   type Cmd, type Wheel, type WheelOpts,
 } from './kit';
 
@@ -264,5 +264,11 @@ export function buildCar(model: string): CarModel {
   for (const c of [...m.group.children]) if (!wheels.has(c)) m.body.add(c);
   m.group.add(m.body);
   m.group.traverse(o => { if ((o as THREE.Mesh).isMesh) o.castShadow = true; });
+  mergeStatic(m.body, [...m.burnFlames, m.mainFlame]);
+  for (const w of m.wheels) {
+    const rimMat = w.rims[0]?.material as THREE.Material | undefined, merged = mergeStatic(w.spin);
+    const rim = rimMat && merged.get(rimMat);
+    w.rims = rim ? [rim] : [];
+  }
   return m;
 }

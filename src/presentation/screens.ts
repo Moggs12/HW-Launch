@@ -4,6 +4,7 @@ import { THEME } from '../content/theme';
 import { MAX_LEVEL, UPGRADES, type UpgradeKey } from '../content/upgrades';
 import { anyAffordable, canBuy, canUnlock, upgradeCost, upgradesDone, upgradesTotal, type RunResult } from '../rules/economy';
 import type { SaveData } from '../rules/save';
+import { Confetti } from './confetti';
 
 /* The HTML overlay: HUD, result card and garage sheet. Shows state; reports taps through callbacks. */
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -43,8 +44,16 @@ function initialTestMode() {
   return import.meta.env.DEV;
 }
 
+export type Sfx = 'tick' | 'coin' | 'pop';
+
 export class Screens {
   testMode = initialTestMode();
+  sfx: (k: Sfx) => void = () => {};
+  private confetti = new Confetti($<HTMLCanvasElement>('confetti'));
+  private coinTarget = 0;          // what the HUD coin counter should end up showing
+  private coinShown = 0;
+  private coinAnim = false;        // coins are flying from the result card to the counter
+  private lastRunCoins = 0;
 
   muted = (() => { try { return localStorage.getItem(MUTE_KEY) === '1'; } catch { return false; } })();
 
@@ -115,7 +124,8 @@ export class Screens {
 
   hud(save: SaveData, carIdx: number) {
     const car = CARS[carIdx];
-    $('coins').textContent = fmt(save.coins);
+    this.coinTarget = save.coins;
+    if (!this.coinAnim) this.setCoins(save.coins);
     $('carName').textContent = car.name;
     $('carTier').textContent = `Car ${carIdx + 1} of ${CARS.length}`;
     $<HTMLImageElement>('carImg').src = carImage(car);
@@ -123,7 +133,13 @@ export class Screens {
     $('garageBtn').classList.toggle('glow', anyAffordable(save, carIdx) || canUnlock(save, carIdx));
   }
 
+  private setCoins(n: number) { this.coinShown = n; $('coins').textContent = fmt(n); }
+  private bump(el: HTMLElement, cls = 'bump') { el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls); }
+  celebrate() { this.confetti.burst(); }
+
   aiming() {
+    if (this.coinAnim) { this.coinAnim = false; this.setCoins(this.coinTarget); }
+    this.lastRunCoins = 0;
     $('result').hidden = true; $('flight').hidden = true; $('aimhint').hidden = false; $('dist').hidden = true; $('garageBtn').hidden = false;
     this.power(0);
   }
@@ -142,17 +158,67 @@ export class Screens {
   flight(distance: number, coinBonus: number, fuel: number) {
     $('distNum').textContent = fmt(Math.max(0, distance));
     $('runCoins').textContent = coinBonus ? '+' + fmt(coinBonus) : '';
+    if (coinBonus > this.lastRunCoins) { this.lastRunCoins = coinBonus; this.bump($('runCoins')); }
     $('boostBtn').style.setProperty('--f', String(fuel));
   }
 
-  result(r: RunResult, crashed: boolean, coinsGrabbed: number) {
+  /* Result card: the numbers count up, then the coins fly into the counter (and confetti for a new best). */
+  result(r: RunResult, crashed: boolean, coinsGrabbed: number, coinsBefore: number) {
     $('resTitle').textContent = crashed ? 'CRASH!' : (r.distance > 60 ? 'WHOOSH!' : 'NICE ONE!');
-    $('resDist').textContent = fmt(r.distance) + ' m';
-    $('resBest').hidden = !r.isBest;
-    $('resCoins').textContent = '+' + fmt(r.total);
+    $('resBest').hidden = true;
     $('resBreak').textContent = fmt(r.distCoins) + ' for distance' +
       (coinsGrabbed ? ` + ${fmt(r.coinCoins)} from ${coinsGrabbed} coin${coinsGrabbed > 1 ? 's' : ''}` : '');
     $('result').hidden = false; $('flight').hidden = true;
+    this.coinAnim = true; this.setCoins(coinsBefore);
+    const t0 = performance.now(), D = 900;
+    let lastTick = 0;
+    const step = (t: number) => {
+      if ($('result').hidden) return;
+      const k = Math.min(1, (t - t0) / D), e = 1 - Math.pow(1 - k, 3);
+      $('resDist').textContent = fmt(r.distance * e) + ' m';
+      $('resCoins').textContent = '+' + fmt(r.total * e);
+      if (k < 1) {
+        if (t - lastTick > 75) { this.sfx('tick'); lastTick = t; }
+        requestAnimationFrame(step);
+        return;
+      }
+      if (r.isBest) { $('resBest').hidden = false; this.bump($('resBest'), 'pop-in'); this.celebrate(); }
+      this.flyCoins(r.total);
+    };
+    requestAnimationFrame(step);
+  }
+
+  private flyCoins(total: number) {
+    const stage = $('stage').getBoundingClientRect(), from = $('resCoins').getBoundingClientRect(), to = $('coins').getBoundingClientRect();
+    const n = Math.min(10, 3 + Math.floor(total / 25)), start = this.coinShown;
+    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    let landed = 0;
+    for (let i = 0; i < n; i++) {
+      const c = document.createElement('span'); c.className = 'cn fly';
+      const x0 = from.left - stage.left + (Math.random() - .5) * 40, y0 = from.top - stage.top + from.height / 2;
+      c.style.left = x0 + 'px'; c.style.top = y0 + 'px';
+      $('stage').appendChild(c);
+      const dx = to.left - stage.left - x0, dy = to.top - stage.top + to.height / 2 - y0;
+      const anim = c.animate([
+        { transform: 'translate(0,0) scale(.4)', opacity: 0 },
+        { transform: `translate(${dx * .15}px,${-50 - Math.random() * 40}px) scale(1.3)`, opacity: 1, offset: .3 },
+        { transform: `translate(${dx}px,${dy}px) scale(.8)`, opacity: 1 },
+      ], { duration: reduce ? 1 : 650, delay: reduce ? 0 : i * 70, easing: 'cubic-bezier(.45,0,.6,1)', fill: 'backwards' });
+      anim.onfinish = () => {
+        c.remove(); landed++;
+        if (!this.coinAnim) return;
+        this.setCoins(Math.round(start + (this.coinTarget - start) * landed / n));
+        this.bump($('coins').parentElement!); this.sfx('coin');
+        if (landed === n) this.coinAnim = false;
+      };
+    }
+  }
+
+  /* little pop on the upgrade just bought */
+  flashUpgrade(key: UpgradeKey) {
+    const row = document.getElementById('buy-' + key)?.closest('.upg') as HTMLElement | null;
+    if (row) this.bump(row, 'pop-in');
+    this.bump($('gCoins').parentElement!);
   }
 
   get garageOpen() { return !$('garage').hidden; }

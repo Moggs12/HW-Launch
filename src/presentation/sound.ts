@@ -1,14 +1,18 @@
 /* All the game sounds and the music. Impacts, clicks and power-ups are short recorded samples
    (public/sfx, from Kenney's CC0 packs); everything else is made on the fly with Web Audio, which
    also stands in for any sample that hasn't loaded. Browsers only allow sound after a tap, so
-   unlock() is called from the Start button.
-   Signal path: sounds -> fx bus (+ a little room reverb) -> master (compressor) -> speakers;
-   music -> music bus -> master. */
+   unlock() is called from the Start button, and any later tap wakes the sound back up (iOS stops it
+   on phone lock, calls and backgrounding).
+   Signal path: sounds -> fx bus (+ a little room reverb) -> master -> soft top-end shelf ->
+   compressor -> brick-wall limiter -> speakers; music -> music bus -> master. Mute = master at 0. */
 type Ctx = AudioContext;
 
 const SAMPLES = ['crash-metal-0', 'crash-metal-1', 'crash-metal-2', 'crash-plate-0', 'crash-plate-1',
   'smash-wood-0', 'smash-wood-1', 'smash-glass-0', 'smash-glass-1', 'land-soft-0', 'land-soft-1', 'land-soft-2',
   'land-hard-0', 'land-hard-1', 'tick', 'click', 'powerup-0', 'powerup-1', 'zap'];
+
+const MASTER = .7;      // overall level, kept well under full scale for small ears
+const MUSIC = .4;       // music bus at full "music level"
 
 const BPM = 118, EIGHTH = 60 / BPM / 2;
 const midi = (n: number) => 440 * Math.pow(2, (n - 69) / 12);
@@ -38,6 +42,8 @@ export class Sound {
   private samples = new Map<string, AudioBuffer>();
   private step = 0;
   private nextNote = 0;
+  private timer = 0;
+  private unlocked = false;
   muted = false;
 
   unlock() {
@@ -46,36 +52,67 @@ export class Sound {
       if (!AC) return;
       const ctx = new AC();
       this.ctx = ctx;
+      // limiter last so nothing (ten coins and a crash at once) can ever get harsh or clip
+      const limit = ctx.createDynamicsCompressor();
+      limit.threshold.value = -4; limit.knee.value = 0; limit.ratio.value = 20; limit.attack.value = .001; limit.release.value = .12;
+      limit.connect(ctx.destination);
       const comp = ctx.createDynamicsCompressor();
-      comp.threshold.value = -16; comp.ratio.value = 4; comp.attack.value = .004; comp.release.value = .2;
-      comp.connect(ctx.destination);
-      this.master = ctx.createGain(); this.master.gain.value = this.muted ? 0 : .8; this.master.connect(comp);
+      comp.threshold.value = -18; comp.knee.value = 8; comp.ratio.value = 4; comp.attack.value = .004; comp.release.value = .2;
+      comp.connect(limit);
+      // take the edge off the very top (squeaky partials, hats, noise): kinder on little ears and phone speakers
+      const soft = ctx.createBiquadFilter(); soft.type = 'highshelf'; soft.frequency.value = 5000; soft.gain.value = -5;
+      soft.connect(comp);
+      this.master = ctx.createGain(); this.master.gain.value = this.muted ? 0 : MASTER; this.master.connect(soft);
       const len = ctx.sampleRate * 2, buf = ctx.createBuffer(1, len, ctx.sampleRate), d = buf.getChannelData(0);
       for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
       this.noise = buf;
       // a small bright room so things don't sound dry and cheap
       const verb = ctx.createConvolver(), wet = ctx.createGain();
-      verb.buffer = this.impulse(1.4); wet.gain.value = .22;
+      verb.buffer = this.impulse(1.4); wet.gain.value = .2;
       verb.connect(wet); wet.connect(this.master);
       this.fx = ctx.createGain(); this.fx.connect(this.master); this.fx.connect(verb);
       this.music = ctx.createGain(); this.music.gain.value = 0; this.music.connect(this.master);
-      const musicVerb = ctx.createGain(); musicVerb.gain.value = .5; this.music.connect(musicVerb); musicVerb.connect(verb);
+      const musicVerb = ctx.createGain(); musicVerb.gain.value = .4; this.music.connect(musicVerb); musicVerb.connect(verb);
       this.startLoops();
       this.loadSamples();
       this.nextNote = ctx.currentTime + .1;
-      setInterval(() => this.schedule(), 25);
+      if (!this.timer) this.timer = window.setInterval(() => this.schedule(), 25);
+      // pause when the app is hidden / phone locked; come back when visible
       document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'hidden') ctx.suspend().catch(() => {});
-        else ctx.resume().catch(() => {});
+        if (document.visibilityState === 'hidden') ctx.suspend().catch(() => {}); else this.wake();
       });
+      window.addEventListener('pagehide', () => { ctx.suspend().catch(() => {}); });
+      window.addEventListener('pageshow', () => this.wake());
+      // iOS only lets a suspended or "interrupted" context restart inside a tap, so every tap tries
+      for (const ev of ['touchend', 'click', 'keydown']) window.addEventListener(ev, () => this.wake(true), { capture: true, passive: true });
     }
-    if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {});
+    this.wake(true);
+  }
+
+  /* resume the context if it is stopped and the page is showing. inTap: called from a user gesture,
+     so also play a silent blip once (older iOS needs a sound started inside the gesture to unlock). */
+  private wake(inTap = false) {
+    const ctx = this.ctx;
+    if (!ctx || document.visibilityState === 'hidden') return;
+    if ((ctx.state as string) !== 'running') ctx.resume().catch(() => {});
+    if (inTap && !this.unlocked) {
+      try {
+        const src = ctx.createBufferSource(); src.buffer = ctx.createBuffer(1, 1, 22050);
+        src.connect(ctx.destination); src.onended = () => src.disconnect(); src.start(0);
+        this.unlocked = true;
+      } catch { /* not allowed yet; the next tap tries again */ }
+    }
+  }
+
+  /* disconnect a finished one-shot and its nodes (Safari is slow to collect connected nodes) */
+  private tidy(src: AudioScheduledSourceNode, ...nodes: AudioNode[]) {
+    src.onended = () => { src.disconnect(); for (const n of nodes) n.disconnect(); };
   }
 
   private loadSamples() {
     const ctx = this.ctx!;
     for (const name of SAMPLES) {
-      fetch(`sfx/${name}.wav`).then(r => r.arrayBuffer())
+      fetch(`sfx/${name}.wav`).then(r => { if (!r.ok) throw new Error(String(r.status)); return r.arrayBuffer(); })
         .then(b => new Promise<AudioBuffer>((ok, fail) => ctx.decodeAudioData(b, ok, fail)))   // callback form for older Safari
         .then(buf => { this.samples.set(name, buf); })
         .catch(() => { /* the made-in-code sound covers it */ });
@@ -90,7 +127,7 @@ export class Sound {
     const ctx = this.ctx, src = ctx.createBufferSource(), g = ctx.createGain();
     src.buffer = takes[Math.floor(Math.random() * takes.length)];
     src.playbackRate.value = rate * (.94 + Math.random() * .12);   // a little variety every time
-    g.gain.value = vol; src.connect(g); g.connect(this.fx); src.start(ctx.currentTime + when);
+    g.gain.value = vol; src.connect(g); g.connect(this.fx); this.tidy(src, g); src.start(ctx.currentTime + when);
     return true;
   }
 
@@ -102,12 +139,12 @@ export class Sound {
 
   setMuted(m: boolean) {
     this.muted = m;
-    if (this.ctx) this.master.gain.setTargetAtTime(m ? 0 : .8, this.ctx.currentTime, .05);
+    if (this.ctx) this.master.gain.setTargetAtTime(m ? 0 : MASTER, this.ctx.currentTime, .05);
   }
 
   /* music volume 0..1 (louder on the home screen, tucked under the action while flying) */
   setMusic(level: number) {
-    if (this.ctx) this.music.gain.setTargetAtTime(level * .5, this.ctx.currentTime, .4);
+    if (this.ctx) this.music.gain.setTargetAtTime(Math.max(0, Math.min(1, level)) * MUSIC, this.ctx.currentTime, .4);
   }
 
   private startLoops() {
@@ -139,7 +176,7 @@ export class Sound {
     if (!ctx || ctx.state !== 'running') return;
     if (this.nextNote < ctx.currentTime - .2) this.nextNote = ctx.currentTime + .05;   // came back from a pause
     while (this.nextNote < ctx.currentTime + .15) {
-      this.playStep(this.step, this.nextNote);
+      if (!this.muted) this.playStep(this.step, this.nextNote);   // keep the beat moving, but make no nodes while muted
       this.nextNote += EIGHTH; this.step = (this.step + 1) % TUNE.length;
     }
   }
@@ -165,20 +202,21 @@ export class Sound {
     const ctx = this.ctx!, o = ctx.createOscillator(), g = ctx.createGain();
     o.type = type; o.frequency.value = f;
     g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol, t + .008); g.gain.exponentialRampToValueAtTime(.001, t + dur);
-    if (lp) { const fl = ctx.createBiquadFilter(); fl.type = 'lowpass'; fl.frequency.value = lp; o.connect(fl); fl.connect(g); } else o.connect(g);
-    g.connect(out); o.start(t); o.stop(t + dur + .02);
+    let fl: BiquadFilterNode | null = null;
+    if (lp) { fl = ctx.createBiquadFilter(); fl.type = 'lowpass'; fl.frequency.value = lp; o.connect(fl); fl.connect(g); } else o.connect(g);
+    g.connect(out); if (fl) this.tidy(o, fl, g); else this.tidy(o, g); o.start(t); o.stop(t + dur + .02);
   }
   private kick(t: number, out: AudioNode) {
     const ctx = this.ctx!, o = ctx.createOscillator(), g = ctx.createGain();
     o.frequency.setValueAtTime(150, t); o.frequency.exponentialRampToValueAtTime(42, t + .12);
     g.gain.setValueAtTime(.6, t); g.gain.exponentialRampToValueAtTime(.001, t + .22);
-    o.connect(g); g.connect(out); o.start(t); o.stop(t + .25);
+    o.connect(g); g.connect(out); this.tidy(o, g); o.start(t); o.stop(t + .25);
   }
   private hit(t: number, dur: number, vol: number, type: BiquadFilterType, freq: number, out: AudioNode) {
     const ctx = this.ctx!, src = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain();
     src.buffer = this.noise; f.type = type; f.frequency.value = freq;
     g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(.001, t + dur);
-    src.connect(f); f.connect(g); g.connect(out); src.start(t, Math.random()); src.stop(t + dur + .02);
+    src.connect(f); f.connect(g); g.connect(out); this.tidy(src, f, g); src.start(t, Math.random()); src.stop(t + dur + .02);
   }
 
   /* ---------- continuous effects ---------- */
@@ -195,13 +233,13 @@ export class Sound {
   setWind(level: number) {
     if (!this.ctx || !this.wind) return;
     const t = this.ctx.currentTime;
-    this.wind.gain.gain.setTargetAtTime(level * .35, t, .1);
+    this.wind.gain.gain.setTargetAtTime(level * .3, t, .1);
     this.wind.filter.frequency.setTargetAtTime(400 + level * 1400, t, .1);
   }
 
   setBoost(on: boolean) {
     if (!this.ctx || !this.boost) return;
-    this.boost.gain.gain.setTargetAtTime(on ? .22 : 0, this.ctx.currentTime, .04);
+    this.boost.gain.gain.setTargetAtTime(on ? .18 : 0, this.ctx.currentTime, .04);
   }
 
   /* ---------- one-shots ---------- */
@@ -211,7 +249,7 @@ export class Sound {
     o.type = type; o.frequency.setValueAtTime(freq, t);
     if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t + dur);
     g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol, t + .01); g.gain.exponentialRampToValueAtTime(.001, t + dur);
-    o.connect(g); g.connect(this.fx); o.start(t); o.stop(t + dur + .02);
+    o.connect(g); g.connect(this.fx); this.tidy(o, g); o.start(t); o.stop(t + dur + .02);
   }
 
   private burst(dur: number, vol: number, type: BiquadFilterType, from: number, to: number, when = 0) {
@@ -219,15 +257,16 @@ export class Sound {
     const ctx = this.ctx, t = ctx.currentTime + when, src = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain();
     src.buffer = this.noise; f.type = type; f.frequency.setValueAtTime(from, t); f.frequency.exponentialRampToValueAtTime(to, t + dur);
     g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(.001, t + dur);
-    src.connect(f); f.connect(g); g.connect(this.fx); src.start(t, Math.random()); src.stop(t + dur + .02);
+    src.connect(f); f.connect(g); g.connect(this.fx); this.tidy(src, f, g); src.start(t, Math.random()); src.stop(t + dur + .02);
   }
 
   /* metal ring: a few out-of-tune partials that die away */
   private clank(vol: number, when = 0) { [523, 1347, 2113, 3170].forEach((f, i) => this.tone(f * (.97 + Math.random() * .06), .5 - i * .08, 'sine', vol / (i + 1), when)); }
 
   twang() { this.tone(180, .35, 'triangle', .3, 0, 60); this.tone(90, .3, 'sine', .3, 0, 50); this.burst(.15, .25, 'lowpass', 2000, 300); }
-  whoosh() { this.burst(.8, .55, 'bandpass', 250, 2600); this.burst(.5, .2, 'highpass', 3000, 6000, .05); }
-  coin() { this.tone(1976, .1, 'square', .05); this.tone(1976, .12, 'sine', .15); this.tone(2637, .35, 'sine', .16, .07); this.tone(2637, .25, 'square', .03, .07); }
+  whoosh() { this.burst(.8, .5, 'bandpass', 250, 2600); this.burst(.5, .12, 'highpass', 3000, 5000, .05); }
+  /* two-note ping (B5 then E6), round rather than squeaky, with a faint sparkle on top */
+  coin() { this.tone(988, .1, 'triangle', .16); this.tone(988, .1, 'square', .025); this.tone(1319, .32, 'triangle', .18, .07); this.tone(2637, .2, 'sine', .025, .07); }
   tick() { if (!this.sample('tick', .5)) this.tone(2200, .025, 'square', .035); }
   pop() { if (!this.sample('click', .7)) this.tone(500, .09, 'sine', .25, 0, 1100); }
   thud(strength = .5) {
@@ -235,21 +274,21 @@ export class Sound {
     if (!this.sample(strength > .5 ? 'land-hard' : 'land-soft', .5 + strength * .6)) this.burst(.14, .2 * strength, 'lowpass', 900, 150);
   }
   crash() {
-    this.tone(85, .5, 'sine', .5, 0, 32);
-    if (this.sample('crash-metal', 1) && this.sample('crash-plate', .9, .03)) { this.burst(.5, .35, 'lowpass', 2500, 180); return; }
-    this.burst(.8, .7, 'lowpass', 3000, 180); this.burst(.35, .3, 'highpass', 4000, 1500, .05); this.clank(.18, .02); this.clank(.1, .15);
+    this.tone(85, .5, 'sine', .4, 0, 32);
+    if (this.sample('crash-metal', .8) && this.sample('crash-plate', .6, .03)) { this.burst(.5, .3, 'lowpass', 2500, 180); return; }
+    this.burst(.8, .6, 'lowpass', 3000, 180); this.burst(.35, .2, 'highpass', 4000, 1500, .05); this.clank(.14, .02); this.clank(.08, .15);
   }
   smash() {
-    this.tone(70, .45, 'sine', .5, 0, 30);
-    if (this.sample('smash-wood', 1, 0, .85) && this.sample('smash-glass', .8, .04)) { this.burst(.5, .35, 'lowpass', 2200, 220); return; }
-    this.burst(.7, .6, 'lowpass', 2500, 220); for (let i = 0; i < 5; i++) this.burst(.12, .15, 'bandpass', 1500 + Math.random() * 2000, 600, .08 + i * .07);
+    this.tone(70, .45, 'sine', .4, 0, 30);
+    if (this.sample('smash-wood', .85, 0, .85) && this.sample('smash-glass', .55, .04)) { this.burst(.5, .3, 'lowpass', 2200, 220); return; }
+    this.burst(.7, .55, 'lowpass', 2500, 220); for (let i = 0; i < 5; i++) this.burst(.12, .15, 'bandpass', 1500 + Math.random() * 2000, 600, .08 + i * .07);
   }
   zap() {
     this.tone(60, .6, 'sine', .4, .05, 30);
-    if (!this.sample('zap', .8)) { this.burst(.5, .55, 'highpass', 6000, 1500); this.tone(1200, .3, 'sawtooth', .12, 0, 80); }
+    if (!this.sample('zap', .7)) { this.burst(.5, .35, 'highpass', 4500, 1500); this.tone(1200, .3, 'sawtooth', .08, 0, 80); }
   }
   powerUp() { if (!this.sample('powerup', .7)) { this.tone(400, .25, 'square', .08, 0, 1200); this.tone(600, .25, 'triangle', .15, .05, 1800); } }
   chime() { this.tone(880, .2, 'triangle', .22); this.tone(1320, .35, 'triangle', .2, .08); this.tone(1760, .4, 'sine', .1, .16); }
   tada() { [523, 659, 784, 1047].forEach((f, i) => { this.tone(f, .35, 'triangle', .2, i * .09); this.tone(f * 2, .2, 'sine', .05, i * .09); }); }
-  fanfare() { [523, 659, 784, 1047, 784, 1047].forEach((f, i) => { this.tone(f, .4, 'square', .08, i * .12); this.tone(f, .45, 'triangle', .18, i * .12); }); }
+  fanfare() { [523, 659, 784, 1047, 784, 1047].forEach((f, i) => { this.tone(f, .4, 'square', .05, i * .12); this.tone(f, .45, 'triangle', .18, i * .12); }); }
 }

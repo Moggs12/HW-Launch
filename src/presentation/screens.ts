@@ -38,6 +38,8 @@ export interface HomeActions {
 const TEST_KEY = 'launch-garage-test';
 const MUTE_KEY = 'launch-garage-muted';
 const HOLD_MS = 2000;
+const ACT_GAP_MS = 450;
+const RESULT_GUARD_MS = 600;
 function initialTestMode() {
   if (/test/i.test(location.search + location.hash)) { try { localStorage.setItem(TEST_KEY, '1'); } catch { /* ignore */ } return true; }
   try { const v = localStorage.getItem(TEST_KEY); if (v) return v === '1'; } catch { /* ignore */ }
@@ -54,12 +56,29 @@ export class Screens {
   private coinShown = 0;
   private coinAnim = false;        // coins are flying from the result card to the counter
   private lastRunCoins = 0;
+  private resultAt = -Infinity;    // when the result card last appeared
+  private lastAct = -Infinity;     // last buy / unlock, to stop a double-tap buying twice
+
+  /* true at most once per ACT_GAP_MS: a quick double-tap only counts once */
+  private debounce() {
+    const t = performance.now();
+    if (t - this.lastAct < ACT_GAP_MS) return false;
+    this.lastAct = t; return true;
+  }
 
   muted = (() => { try { return localStorage.getItem(MUTE_KEY) === '1'; } catch { return false; } })();
 
   constructor(private garage: GarageActions, homeActs: HomeActions) {
     $('closeGarage').addEventListener('click', () => this.closeGarage());
-    $('unlockBtn').addEventListener('click', () => garage.unlock());
+    // tapping the dimmed backdrop above the sheet closes it too (easier than finding the X)
+    $('garage').addEventListener('click', e => { if (e.target === $('garage')) this.closeGarage(); });
+    addEventListener('keydown', e => { if (e.key === 'Escape' && this.garageOpen) this.closeGarage(); });
+    $('unlockBtn').addEventListener('click', () => { if (this.debounce()) garage.unlock(); });
+    // Result card: swallow taps for a moment after it appears, so a finger still mashing the
+    // flight buttons can't skip it. Capture phase on the overlay runs before the buttons' own handlers.
+    $('result').addEventListener('click', e => {
+      if (performance.now() - this.resultAt < RESULT_GUARD_MS) { e.stopImmediatePropagation(); e.preventDefault(); }
+    }, true);
     $('testCoins').addEventListener('click', () => garage.testCoins());
     $('testMax').addEventListener('click', () => garage.testMax());
     $('testReset').addEventListener('click', () => garage.testReset());
@@ -71,7 +90,7 @@ export class Screens {
     $('logo1').textContent = words[0];
     $('logo2').textContent = words.slice(1).join(' ');
     $('build').textContent = 'v' + __BUILD__;
-    $('startBtn').addEventListener('click', () => { this.hideHome(); homeActs.start(); });
+    $('startBtn').addEventListener('click', () => { if (!this.homeOpen) return; this.hideHome(); homeActs.start(); });
     $('soundBtn').addEventListener('click', () => {
       this.muted = !this.muted;
       try { localStorage.setItem(MUTE_KEY, this.muted ? '1' : '0'); } catch { /* ignore */ }
@@ -168,7 +187,7 @@ export class Screens {
     $('resBest').hidden = true;
     $('resBreak').textContent = fmt(r.distCoins) + ' for distance' +
       (coinsGrabbed ? ` + ${fmt(r.coinCoins)} from ${coinsGrabbed} coin${coinsGrabbed > 1 ? 's' : ''}` : '');
-    $('result').hidden = false; $('flight').hidden = true;
+    $('result').hidden = false; $('flight').hidden = true; this.resultAt = performance.now();
     this.coinAnim = true; this.setCoins(coinsBefore);
     const t0 = performance.now(), D = 900;
     let lastTick = 0;
@@ -241,7 +260,9 @@ export class Screens {
         <div class="upg-txt"><b>${u.name}</b><span>${u.text}</span>
         <div class="pips">${Array.from({ length: MAX_LEVEL }, (_, i) => `<i class="${i < l ? 'on' : ''}"></i>`).join('')}</div></div>
         <button class="buy" id="buy-${u.key}" ${canBuy(save, carIdx, u.key) ? '' : 'disabled'}>${max ? 'MAX' : '<span class="cn"></span>' + fmt(cost)}</button>`;
-      row.querySelector('button')!.addEventListener('click', () => this.garage.buy(u.key));
+      const btn = row.querySelector('button')!;
+      btn.setAttribute('aria-label', max ? `${u.name}: max` : `Buy ${u.name} for ${fmt(cost)} coins`);
+      btn.addEventListener('click', () => { if (this.debounce()) this.garage.buy(u.key); });
       list.appendChild(row);
     }
     const un = $('unlockBtn');

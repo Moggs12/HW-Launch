@@ -21,6 +21,9 @@ export interface Layout {
   coins: CoinSpot[];
 }
 
+const COIN_STEP = 1.6;     // gap between the three coins of a trio
+const COIN_CLEAR = .6;     // keep coins this far clear of an obstacle's front and back
+
 export function buildLayout(level: LevelDef): Layout {
   const rnd = makeRng(level.seed), LEN = level.length;
   const sideX = level.roadHalf + level.walk + .3;
@@ -53,8 +56,16 @@ export function buildLayout(level: LevelDef): Layout {
   const coins: CoinSpot[] = [];
   for (let z = level.coinSpacing; z < LEN - 40; z += level.coinSpacing) {
     const next = level.course.find(o => o.z > z) ?? { h: 6 };
-    const y = 1.2 + rnd() * Math.min(18, next.h + 3), x = (rnd() - .5) * 10;
-    for (let j = 0; j < 3; j++) coins.push({ x, y, z: -(z + j * 1.6) });
+    let y = 1.2 + rnd() * Math.min(18, next.h + 3), x = (rnd() - .5) * 10;
+    // a trio that lands on an obstacle goes through its gap, or hops over a low row; none inside walls
+    const zEnd = z + 2 * COIN_STEP;
+    const block = level.course.find(o => zEnd > o.z - COIN_CLEAR && z < o.z + o.d + COIN_CLEAR);
+    if (block) {
+      if (block.kind === 'cones' || block.kind === 'cars') y = Math.max(y, block.h + 1.2);
+      else if (block.gap != null) x = block.gap;
+      else continue;
+    }
+    for (let j = 0; j < 3; j++) coins.push({ x, y, z: -(z + j * COIN_STEP) });
   }
   return { sideX, side, back, skyline, clouds, carJitter, carRowXs, coins };
 }

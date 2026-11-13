@@ -38,9 +38,10 @@ addEventListener('error', e => { if (!started) showStartupError(e.error ?? e.mes
 
 async function start() {
   applyTheme();
-  registerServiceWorker();
+  let game: Game | null = null;
+  registerServiceWorker(() => game?.busy ?? false);
   await fontsReady();
-  new Game(document.getElementById('stage')!, document.getElementById('c') as HTMLCanvasElement,
+  game = new Game(document.getElementById('stage')!, document.getElementById('c') as HTMLCanvasElement,
     document.getElementById('speed') as HTMLCanvasElement, CITY, loadSave(webPlatform.storage), webPlatform);
   started = true;
 }

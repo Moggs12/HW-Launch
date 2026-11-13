@@ -39,11 +39,13 @@ export class Run {
   constructor(private world: World, readonly carIdx: number, lv: UpgradeLevels,
               power: number, heading: number, pullBack = 0) {
     const car = CARS[carIdx];
-    this.shot = makeShot(car, lv, SPECIALS[car.special].effect, power, heading, world.ramp, pullBack);
+    const p = Number.isFinite(power) ? Math.max(0, Math.min(1, power)) : 0;
+    this.shot = makeShot(car, lv, SPECIALS[car.special].effect, p, Number.isFinite(heading) ? heading : 0, world.ramp, Math.max(0, pullBack || 0));
     this.taken = world.layout.coins.map(() => false);
   }
 
-  get finished() { return this.shot.mode === 'stop'; }
+  /* Done once the car has stopped and any lightning bolt on its way has landed. */
+  get finished() { return this.shot.mode === 'stop' && !this.zap; }
 
   useSpecial() { return useSpecial(this.shot, this.world.level.course); }
 
@@ -63,7 +65,9 @@ export class Run {
       this.zap = null;
     }
     if (s.mode !== 'ramp' && s.mode !== 'crash' && s.mode !== 'stop' && !this.crashed) {
-      const hit = hitTest(s, CARS[this.carIdx].halfWidth, w.parts, this.broken, w.layout.side, w.layout.sideX);
+      // the building a bolt is already on its way to counts as gone, so a fast car can't crash into it first
+      const gone = this.zap ? new Set([...this.broken, this.zap.part.item]) : this.broken;
+      const hit = hitTest(s, CARS[this.carIdx].halfWidth, w.parts, gone, w.layout.side, w.layout.sideX);
       if (hit?.type === 'smash') this.smash(hit.item, 'smash');
       else if (hit) { this.crashed = true; crashAt(s, hit.d); this.events.push({ type: 'crash', what: hit.what }); }
     }

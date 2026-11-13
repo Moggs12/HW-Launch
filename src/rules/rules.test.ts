@@ -75,11 +75,11 @@ describe('physics', () => {
     expect(s.fuel).toBeLessThanOrEqual(0);
   });
 
-  it('a special can only be used once, and not on the ramp', () => {
+  it('a special can only be used once, even pressed on the ramp', () => {
     const s = makeShot(CARS[1], freshLevels(), SPECIALS.flameBoost.effect, 1, 0, world.ramp);
+    expect(useSpecial(s, CITY.course)).toBe(true);
     expect(useSpecial(s, CITY.course)).toBe(false);
     while (s.mode === 'ramp') stepShot(s, 1 / 120, null);
-    expect(useSpecial(s, CITY.course)).toBe(true);
     expect(useSpecial(s, CITY.course)).toBe(false);
     expect(s.burn).toBeCloseTo(1.3);
   });
@@ -117,9 +117,9 @@ describe('course & collisions', () => {
     });
   });
 
-  it('Chomp smashes through one obstacle', () => {
-    const plain = simulate(world, 2, freshLevels(), 1);
-    const chomp = simulate(world, 2, freshLevels(), 1, 0, { specialAt: .1 });
+  it('Chomp smashes through one building', () => {
+    const plain = simulate(world, 2, maxed(), 1);
+    const chomp = simulate(world, 2, maxed(), 1, 0, { specialAt: .1 });
     expect(chomp.broken.size).toBe(1);
     expect(-chomp.shot.z).toBeGreaterThan(-plain.shot.z);
   });

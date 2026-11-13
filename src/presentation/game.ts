@@ -4,9 +4,9 @@ import type { LevelDef } from '../content/level';
 import { SPECIALS } from '../content/specials';
 import { MAX_LEVEL, UPGRADES } from '../content/upgrades';
 import type { Platform } from '../platform/platform';
-import { AIM, canLaunch, pullFromDrag } from '../rules/aim';
+import { AIM, canLaunch, predictArc, pullFromDrag } from '../rules/aim';
 import { buyUpgrade, recordRun, runReward, unlockNext } from '../rules/economy';
-import { PHYSICS, makeShot, stepShot } from '../rules/physics';
+import { PHYSICS, makeShot } from '../rules/physics';
 import { Run, STEP, buildWorld, type World } from '../rules/run';
 import { freshSave, writeSave, type SaveData } from '../rules/save';
 import { ChaseCamera } from './camera';
@@ -28,7 +28,9 @@ import { canvasTex, setMaxAnisotropy } from './textures';
 type State = 'home' | 'aim' | 'pulling' | 'flying' | 'result';
 
 const PREDICT_DOTS = 36;
+const PREDICT_EVERY = Math.round(1 / 12 / STEP);
 const END_PAUSE = { crash: .9, stop: .6 };
+const MAX_RUN_SECONDS = 30;   // safety net: a launch always ends, even if the car never quite stops
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
 
 export class Game {
@@ -47,6 +49,8 @@ export class Game {
   private clock = new THREE.Clock();
 
   private state: State = 'home';
+  /* a car is being pulled back or is mid-launch: not a good moment to reload for an update */
+  get busy() { return this.state === 'pulling' || this.state === 'flying'; }
   private carIdx = 0;
   private car!: CarModel;
   private carRear = 2.2;
@@ -58,7 +62,7 @@ export class Game {
   private endT = 0;
   private susp = { y: 0, v: 0 };   // body bounce on the wheels
 
-  constructor(private stage: HTMLElement, canvas: HTMLCanvasElement, speedCanvas: HTMLCanvasElement,
+  constructor(private stage: HTMLElement, private canvas: HTMLCanvasElement, speedCanvas: HTMLCanvasElement,
               level: LevelDef, private save: SaveData, private platform: Platform) {
     this.st = createStage(canvas);
     setMaxAnisotropy(this.st.renderer.capabilities.getMaxAnisotropy());
@@ -135,7 +139,15 @@ export class Game {
     this.screens.hud(this.save, i);
   }
 
+  /* forget any pull in progress (its finger-up will then be ignored) */
+  private cancelDrag() {
+    const d = this.drag;
+    this.drag = null;
+    if (d) try { if (this.canvas.hasPointerCapture(d.id)) this.canvas.releasePointerCapture(d.id); } catch { /* gone */ }
+  }
+
   private resetShot() {
+    this.cancelDrag();
     if (this.state !== 'home') this.state = 'aim';
     this.run = null; this.pull = { power: 0, heading: 0 }; this.inp.boost = false;
     this.car.group.position.set(0, 0, this.world.ramp.startZ); this.car.group.rotation.set(0, 0, 0);
@@ -147,7 +159,7 @@ export class Game {
     this.car.burnFlames.forEach(f => { f.visible = false; });
     this.updateCatapult();
     this.screens.aiming();
-    this.cam.snap();
+    this.cam.snap(); this.fx.clear();
   }
 
   private updateCatapult() {
@@ -160,25 +172,24 @@ export class Game {
     const car = CARS[this.carIdx];
     const s = makeShot(car, this.save.levels[this.carIdx], SPECIALS[car.special].effect, this.pull.power, this.pull.heading,
       this.world.ramp, this.pull.power * AIM.pullBack);
-    const m = new THREE.Matrix4(); let k = 0, n = 0;
-    for (let i = 0; i < 600 && k < PREDICT_DOTS; i++) {
-      stepShot(s, 1 / 60, null);
-      if (s.mode === 'ramp') continue;
-      if (s.mode !== 'air') break;
-      if (n++ % 5 === 0) { m.makeTranslation(s.x, s.y + .6, s.z); this.dots.setMatrixAt(k++, m); }
-    }
-    this.dots.count = k; this.dots.instanceMatrix.needsUpdate = true;
+    // same fixed step as the real run (STEP), so the dots sit on the real path; a dot every 1/12 s
+    const pts = predictArc(s, STEP, PREDICT_EVERY, PREDICT_DOTS);
+    const m = new THREE.Matrix4();
+    pts.forEach((p, k) => { m.makeTranslation(p.x, p.y + .6, p.z); this.dots.setMatrixAt(k, m); });
+    this.dots.count = pts.length; this.dots.instanceMatrix.needsUpdate = true;
   }
 
   /* ---------- input ---------- */
   private bindInput(canvas: HTMLCanvasElement) {
     canvas.addEventListener('pointerdown', e => {
-      if (this.state !== 'aim' || this.screens.garageOpen) return;
-      this.drag = { x: e.clientX, y: e.clientY, id: e.pointerId }; canvas.setPointerCapture(e.pointerId);
+      // one finger pulls; a second finger, a right-click or a tap while the garage is open does nothing
+      if (this.state !== 'aim' || this.drag || this.screens.garageOpen || e.button !== 0) return;
+      this.drag = { x: e.clientX, y: e.clientY, id: e.pointerId };
+      try { canvas.setPointerCapture(e.pointerId); } catch { /* pointer already gone */ }
       this.state = 'pulling'; this.screens.pulling();
     });
     canvas.addEventListener('pointermove', e => {
-      if (!this.drag || e.pointerId !== this.drag.id) return;
+      if (!this.drag || e.pointerId !== this.drag.id || this.state !== 'pulling') return;
       const before = this.pull.power;
       this.pull = pullFromDrag(e.clientX - this.drag.x, e.clientY - this.drag.y, this.stage.clientWidth, this.stage.clientHeight);
       const back = this.pull.power * AIM.pullBack;
@@ -188,20 +199,36 @@ export class Game {
       this.screens.power(this.pull.power);
       if (Math.floor(before * 4) !== Math.floor(this.pull.power * 4) && this.pull.power > before) this.buzz('light');
     });
-    const release = () => {
-      if (!this.drag) return;
+    // only the finger that started the pull can launch it; a cancelled pull (system gesture,
+    // lost capture, app switch) just puts the car back rather than launching by surprise
+    const release = (e: PointerEvent) => {
+      if (!this.drag || e.pointerId !== this.drag.id) return;
       this.drag = null;
-      if (!canLaunch(this.pull.power)) { this.resetShot(); return; }
+      if (this.state !== 'pulling') return;
+      if (e.type !== 'pointerup' || !canLaunch(this.pull.power)) { this.resetShot(); return; }
       this.launch();
     };
     canvas.addEventListener('pointerup', release);
     canvas.addEventListener('pointercancel', release);
+    canvas.addEventListener('lostpointercapture', release);
+    canvas.addEventListener('contextmenu', e => e.preventDefault());
 
     const boost = document.getElementById('boostBtn')!;
-    const on = (e: PointerEvent) => { e.preventDefault(); boost.setPointerCapture?.(e.pointerId); this.inp.boost = true; boost.classList.add('down'); };
+    const on = (e: PointerEvent) => {
+      e.preventDefault();
+      try { boost.setPointerCapture(e.pointerId); } catch { /* pointer already gone */ }
+      this.inp.boost = true; boost.classList.add('down');
+    };
     const off = () => { this.inp.boost = false; boost.classList.remove('down'); };
     boost.addEventListener('pointerdown', on);
     for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) boost.addEventListener(ev, off);
+    // leaving the app mid-pull or mid-boost: no finger-up will come, so let go now
+    const letGo = () => {
+      off();
+      if (this.state === 'pulling') this.resetShot();
+    };
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') letGo(); });
+    addEventListener('blur', letGo);
     document.getElementById('specialBtn')!.addEventListener('click', () => this.special());
     addEventListener('keydown', e => {
       if (this.state !== 'flying') return;
@@ -216,8 +243,12 @@ export class Game {
       if (b && !b.disabled && b.id !== 'boostBtn' && b.id !== 'specialBtn') this.sound.pop();
     });
     document.getElementById('garageBtn')!.addEventListener('click', () => { if (this.state === 'aim') this.screens.openGarage(this.save, this.carIdx); });
-    document.getElementById('againBtn')!.addEventListener('click', () => this.resetShot());
-    document.getElementById('resGarage')!.addEventListener('click', () => { this.resetShot(); this.screens.openGarage(this.save, this.carIdx); });
+    // result-card buttons only act on the result card (a stray double tap can't reset a new pull)
+    document.getElementById('againBtn')!.addEventListener('click', () => { if (this.state === 'result') this.resetShot(); });
+    document.getElementById('resGarage')!.addEventListener('click', () => {
+      if (this.state !== 'result') return;
+      this.resetShot(); this.screens.openGarage(this.save, this.carIdx);
+    });
   }
 
   private special() {
@@ -301,7 +332,7 @@ export class Game {
 
     const boostLv = this.save.levels[this.carIdx].boost;
     this.screens.flight(-s.z, runReward(0, run.coinsGrabbed).coinCoins, boostLv ? Math.max(0, s.fuel / (PHYSICS.boostFuelPerLevel * boostLv)) : 0);
-    if (run.finished) {
+    if (run.finished || s.t > MAX_RUN_SECONDS) {
       if (!this.endT) this.endT = now;
       if (now - this.endT > (run.crashed ? END_PAUSE.crash : END_PAUSE.stop)) { this.endT = 0; this.finishRun(); }
     }

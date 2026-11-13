@@ -34,14 +34,18 @@ function haptic(kind: Buzz) {
 export const webPlatform: Platform = { storage: webStorage, haptic };
 
 /* Offline support. A new version installs in the background; when it takes over we reload once
-   so the phone never gets stuck on an old copy. */
-export function registerServiceWorker() {
+   so the phone never gets stuck on an old copy. busy() holds the reload back while a car is being
+   pulled or is flying, so an update never cuts a launch short. */
+export function registerServiceWorker(busy: () => boolean = () => false) {
   if (!import.meta.env.PROD || !('serviceWorker' in navigator)) return;
   const hadController = !!navigator.serviceWorker.controller;
   let reloaded = false;
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (hadController && !reloaded) { reloaded = true; location.reload(); }
-  });
+  const reloadWhenIdle = () => {
+    if (reloaded) return;
+    if (busy()) { setTimeout(reloadWhenIdle, 1000); return; }
+    reloaded = true; location.reload();
+  };
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController) reloadWhenIdle(); });
   addEventListener('load', () => {
     navigator.serviceWorker.register('./sw.js').then(reg => {
       reg.update().catch(() => {});

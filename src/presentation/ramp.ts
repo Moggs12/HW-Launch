@@ -35,9 +35,10 @@ export function buildRamp(scene: THREE.Scene, g: RampGeo, def: RampDef) {
   const inner = wedge.children[0] as THREE.Mesh;
   inner.material = [new THREE.MeshStandardMaterial({ map: lattice, roughness: .45, metalness: .3 }), inner.material as THREE.Material];
 
-  // a darker driving lane down the middle
+  // a darker driving lane down the middle. The wedge's bevel puffs its top surface up ~.037, so the
+  // lane sits .06 proud of the profile (at .03 it was buried in / z-fighting with the red top)
   const lane: Cmd[] = [['m', prof[0].z, .01]];
-  for (const p of prof) lane.push(['l', p.z, p.y + .03]);
+  for (const p of prof) lane.push(['l', p.z, p.y + .06]);
   for (let i = prof.length - 1; i >= 0; i--) lane.push(['l', prof[i].z, Math.max(.01, prof[i].y - .2)]);
   slab(grp, lane, 3.2, 0, paint(0x9e0d08, { clearcoat: .4, roughness: .5 }));
 
@@ -55,7 +56,7 @@ export function buildRamp(scene: THREE.Scene, g: RampGeo, def: RampDef) {
   // chevrons on the run-up pointing at the lip
   for (let i = 0; i < 3; i++) {
     const s = g.run * (.15 + i * .25), p = rampPoint(g, s);
-    const ch = slab(grp, [['m', 0, 0], ['l', .6, .5], ['l', 0, 1.0], ['l', -.3, 1.0], ['l', .3, .5], ['l', -.3, 0], ['l', 0, 0]], .03, 0, railMat, 0, p.y + .03, p.z);
+    const ch = slab(grp, [['m', 0, 0], ['l', .6, .5], ['l', 0, 1.0], ['l', -.3, 1.0], ['l', .3, .5], ['l', -.3, 0], ['l', 0, 0]], .03, 0, railMat, 0, p.y + .08, p.z);   // above the lane
     orient(ch, V3(0, 0, -1), V3(1, 0, 0), V3(0, 1, 0)); ch.scale.setScalar(1.3);
   }
 
@@ -65,7 +66,7 @@ export function buildRamp(scene: THREE.Scene, g: RampGeo, def: RampDef) {
   });
   const lip = new THREE.Mesh(new THREE.BoxGeometry(W, .05, .7), new THREE.MeshStandardMaterial({ map: chk, roughness: .6 }));
   const lp = rampPoint(g, g.length - .35);
-  lip.position.set(0, lp.y + .04, lp.z); lip.rotation.x = lp.pitch; grp.add(lip);
+  lip.position.set(0, lp.y + .07, lp.z); lip.rotation.x = lp.pitch; grp.add(lip);
 
   // blue trim along the bottom edges
   for (const s of [-1, 1]) rbox(grp, .12, .3, g.startZ, .04, paint(hex(THEME.colors.blue)), s * (W / 2 + .02), .15, g.startZ / 2);

@@ -6,17 +6,25 @@ import type { SaveData } from './save';
 
 /* Price of the next level, or null when maxed. */
 export function upgradeCost(carIdx: number, level: number): number | null {
-  return level >= MAX_LEVEL ? null : CARS[carIdx].upgradePrices[level];
+  const car = CARS[carIdx];
+  if (!car || !(level >= 0) || level >= MAX_LEVEL) return null;
+  return car.upgradePrices[Math.floor(level)] ?? null;
+}
+
+/* Only unlocked cars can be upgraded. */
+function nextCost(save: SaveData, carIdx: number, key: UpgradeKey) {
+  if (!(carIdx >= 0 && carIdx < save.unlocked) || !save.levels[carIdx]) return null;
+  return upgradeCost(carIdx, save.levels[carIdx][key]);
 }
 
 export function canBuy(save: SaveData, carIdx: number, key: UpgradeKey) {
-  const cost = upgradeCost(carIdx, save.levels[carIdx][key]);
+  const cost = nextCost(save, carIdx, key);
   return cost !== null && save.coins >= cost;
 }
 
 export function buyUpgrade(save: SaveData, carIdx: number, key: UpgradeKey): boolean {
-  const cost = upgradeCost(carIdx, save.levels[carIdx][key]);
-  if (cost === null || save.coins < cost) return false;
+  const cost = nextCost(save, carIdx, key);
+  if (cost === null || !(save.coins >= cost)) return false;
   save.coins -= cost;
   save.levels[carIdx][key]++;
   return true;
@@ -33,8 +41,9 @@ export function canUnlock(save: SaveData, carIdx: number) {
   return upgradesDone(save, carIdx) === upgradesTotal && save.unlocked < CARS.length && carIdx === save.unlocked - 1;
 }
 
+/* Works from the newest car, whichever car is selected. */
 export function unlockNext(save: SaveData): boolean {
-  if (!canUnlock(save, save.car)) return false;
+  if (!canUnlock(save, save.unlocked - 1)) return false;
   save.unlocked++;
   save.car = save.unlocked - 1;
   return true;
@@ -42,17 +51,22 @@ export function unlockNext(save: SaveData): boolean {
 
 export interface RunResult { distance: number; distCoins: number; coinCoins: number; total: number; isBest: boolean }
 
+/* Whole, non-negative and finite, whatever comes in. */
+const whole = (n: number, max: number) => Number.isFinite(n) ? Math.max(0, Math.min(max, Math.round(n))) : 0;
+const MAX_DISTANCE = 1e5, MAX_GRABBED = 1e4;
+
 export function runReward(distance: number, coinsGrabbed: number) {
-  const distCoins = Math.round(distance * REWARDS.perMetre), coinCoins = coinsGrabbed * REWARDS.perCoin;
+  const distCoins = Math.round(whole(distance, MAX_DISTANCE) * REWARDS.perMetre);
+  const coinCoins = whole(coinsGrabbed, MAX_GRABBED) * REWARDS.perCoin;
   return { distCoins, coinCoins, total: Math.max(REWARDS.minimum, distCoins + coinCoins) };
 }
 
 /* Bank a finished launch. */
 export function recordRun(save: SaveData, carIdx: number, rawDistance: number, coinsGrabbed: number): RunResult {
-  const distance = Math.max(0, Math.round(rawDistance));
+  const distance = whole(rawDistance, MAX_DISTANCE);
   const r = runReward(distance, coinsGrabbed);
-  save.coins += r.total;
-  const isBest = distance > save.best[carIdx];
-  if (isBest) save.best[carIdx] = distance;
+  save.coins = (Number.isFinite(save.coins) ? Math.max(0, save.coins) : 0) + r.total;
+  const isBest = distance > (save.best[carIdx] ?? 0);
+  if (isBest && carIdx >= 0 && carIdx < save.best.length) save.best[carIdx] = distance;
   return { distance, ...r, isBest };
 }

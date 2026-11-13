@@ -33,29 +33,34 @@ export type Hit =
   | { type: 'crash'; d: number; what: ObstacleKind | 'side' }
   | { type: 'smash'; item: number };
 
-const REACH = 1.9;        // how far in front/behind the car's centre counts as touching
-const SIDE_MARGIN = .35;
+export const REACH = 1.9;  // how far in front of the car's centre counts as touching (its nose)
+const TAIL_GRACE = .3;    // once the car's centre is this far past an obstacle, only its tail is over it: let it go
+const SIDE_MARGIN = .35;  // side buildings: a little wider than the car, so it never scrapes through the wall
+const PART_MARGIN = -.15; // course obstacles: a little narrower, so a gap needn't be hit pixel-perfect (age 4)
 
-/* broken: course items already smashed this launch */
+/* broken: course items already smashed this launch.
+   Runs every fixed step (1/120 s); the hit window (REACH + depth + TAIL_GRACE >= 3.2 m) is far longer
+   than the fastest car moves in one step (~1 m), so nothing can tunnel through a thin row of cones. */
 export function hitTest(s: Shot, halfWidth: number, parts: readonly Part[], broken: ReadonlySet<number>,
                         side: readonly SideBlock[], sideX: number): Hit | null {
-  const d = distanceOf(s), hw = halfWidth + SIDE_MARGIN;
+  const d = distanceOf(s), hw = halfWidth + SIDE_MARGIN, pw = halfWidth + PART_MARGIN;
   if (Math.abs(s.x) > sideX - hw) {
     const sx = Math.sign(s.x);
-    for (const b of side) if (b.side === sx && d + 1.5 > b.z0 && d - 1.5 < b.z1 && s.y < b.h) return { type: 'crash', d: Math.max(0, d), what: 'side' };
+    // crash.d is where the car's nose stops; a side scrape stops the car where it is, not 1.9 m back
+    for (const b of side) if (b.side === sx && d + 1.5 > b.z0 && d - 1.5 < b.z1 && s.y < b.h) return { type: 'crash', d: Math.max(0, d) + REACH, what: 'side' };
   }
   for (const p of parts) {
     if (broken.has(p.item)) continue;
-    if (d + REACH > p.z0 && d - REACH < p.z1 && s.y < p.h && s.x + hw > p.x0 && s.x - hw < p.x1) {
-      if (s.smash) { s.smash = false; return { type: 'smash', item: p.item }; }
+    if (d + REACH > p.z0 && d < p.z1 + TAIL_GRACE && s.y < p.h && s.x + pw > p.x0 && s.x - pw < p.x1) {
+      if (s.smash && p.kind === 'bld') { s.smash = false; return { type: 'smash', item: p.item }; }
       return { type: 'crash', d: p.z0, what: p.kind };
     }
   }
   return null;
 }
 
-/* Lightning: the nearest unbroken piece ahead. */
+/* Lightning: the nearest unbroken building ahead (cones, cars and buses are left alone). */
 export function zapTarget(s: Shot, parts: readonly Part[], broken: ReadonlySet<number>): Part | null {
   const d = distanceOf(s);
-  return parts.filter(p => !broken.has(p.item) && p.z0 > d + 2).sort((a, b) => a.z0 - b.z0)[0] ?? null;
+  return parts.filter(p => p.kind === 'bld' && !broken.has(p.item) && p.z0 > d + 2).sort((a, b) => a.z0 - b.z0)[0] ?? null;
 }

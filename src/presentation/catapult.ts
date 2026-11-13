@@ -55,8 +55,13 @@ export class Catapult {
 
   /* Band hugs the back of the car while aiming; snaps forward once launched. */
   update(carPos: THREE.Vector3, carYaw: number, carRear: number, launched: boolean) {
-    const pc = launched ? V3(0, .4, this.z0 + carRear + .5) : V3(carPos.x, .4, carPos.z + carRear + .25);
-    this.pouch.position.copy(pc); this.pouch.rotation.y = launched ? 0 : carYaw;
-    [-1, 1].forEach((s, i) => stretch(this.bands[i], V3(s * 2.3, 2.6, this.z0 + 3.3), V3(pc.x + s * .58, pc.y, pc.z)));
+    // pouch sits behind the car's rear bumper, which swings round with the aim
+    const back = carRear + .25;
+    const pc = launched ? V3(0, .4, this.z0 + carRear + .5) : V3(carPos.x + Math.sin(carYaw) * back, .4, carPos.z + Math.cos(carYaw) * back);
+    const yaw = launched ? 0 : carYaw;
+    this.pouch.position.copy(pc); this.pouch.rotation.y = yaw;
+    // band ends follow the pouch's ends as it turns with the aim (pouch is 1.25 wide)
+    const ex = .58 * Math.cos(yaw), ez = -.58 * Math.sin(yaw);
+    [-1, 1].forEach((s, i) => stretch(this.bands[i], V3(s * 2.3, 2.6, this.z0 + 3.3), V3(pc.x + s * ex, pc.y, pc.z + s * ez)));
   }
 }

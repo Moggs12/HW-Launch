@@ -1,5 +1,7 @@
 import { execSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join, relative } from 'node:path';
 import type { Plugin } from 'vite';
 import { defineConfig } from 'vitest/config';
 import { THEME } from './src/content/theme';
@@ -18,9 +20,11 @@ function themePlugin(): Plugin {
   const manifest = () => JSON.stringify({
     name: THEME.name,
     short_name: THEME.shortName,
+    id: './',
     start_url: './',
     scope: './',
-    display: 'fullscreen',
+    display: 'fullscreen',          // iOS treats this as standalone; Android hides the bars
+    display_override: ['fullscreen', 'standalone'],
     orientation: 'any',
     background_color: THEME.colors.sky,
     theme_color: THEME.colors.sky,
@@ -29,6 +33,7 @@ function themePlugin(): Plugin {
       { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png' },
       { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
       { src: 'icons/icon.svg', sizes: 'any', type: 'image/svg+xml' },
+      { src: 'icons/apple-touch-icon.png', sizes: '180x180', type: 'image/png' },
     ],
   }, null, 2);
   return {
@@ -52,10 +57,41 @@ function themePlugin(): Plugin {
   };
 }
 
+/* Turns public/sw.js into the real service worker: VERSION becomes a hash of every built file and
+   PRECACHE lists them, so each deploy is picked up by installed phones and the whole game works offline. */
+function swPlugin(): Plugin {
+  const skip = (p: string) => p === 'sw.js' || p.endsWith('.txt') || p.endsWith('.map');
+  const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true })
+    .flatMap(d => d.isDirectory() ? walk(join(dir, d.name)) : [join(dir, d.name)]);
+  return {
+    name: 'service-worker',
+    apply: 'build',
+    writeBundle(options) {
+      const out = options.dir!;
+      const files = walk(out).map(f => relative(out, f).replace(/\\/g, '/')).filter(p => !skip(p)).sort();
+      const hash = createHash('sha256');
+      for (const f of files) hash.update(f).update(readFileSync(join(out, f)));
+      const template = readFileSync('public/sw.js', 'utf8');
+      if (!template.includes('__SW_VERSION__') || !template.includes('/*__SW_PRECACHE__*/')) throw new Error('public/sw.js is missing its build placeholders');
+      const sw = template
+        .replace('__SW_VERSION__', hash.digest('hex').slice(0, 12))
+        .replace('/*__SW_PRECACHE__*/', files.map(f => `, './${f}'`).join(''));
+      writeFileSync(join(out, 'sw.js'), sw);
+    },
+  };
+}
+
 export default defineConfig({
   base: './',            // works on GitHub Pages (/HW-Launch/) and inside a Capacitor app
-  build: { target: 'es2022', chunkSizeWarningLimit: 700 },   // three.js is most of the bundle
-  plugins: [themePlugin()],
+  build: {
+    target: 'es2022',
+    chunkSizeWarningLimit: 700,   // three.js alone is ~500 kB; it gets its own chunk below
+    rollupOptions: {
+      // three.js in its own file: it only changes when we upgrade it, so phones keep it across game updates
+      output: { manualChunks: id => id.includes('node_modules/three/') ? 'three' : undefined },
+    },
+  },
+  plugins: [themePlugin(), swPlugin()],
   define: { __BUILD__: JSON.stringify(buildLabel()) },
   test: { include: ['src/**/*.test.ts'] },
 });

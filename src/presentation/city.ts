@@ -93,7 +93,13 @@ export function buildCity(scene: THREE.Scene, world: World): CityView {
   function shopfront(b: SideBlock) {
     const faceX = b.x - b.side * b.w / 2, len = b.d - .8, k = (b.colour * 31 + Math.round(b.zc)) >>> 0;
     put(tiledBox(.3, 3, len, 4, 3), shopMats[k % shopMats.length], faceX - b.side * .1, 1.5, b.zc);
-    if (k % 5 < 3) put(tiledBox(1.6, .06, len - .4, 1.6, 1), awnMats[k % awnMats.length], faceX - b.side * .75, 3.35, b.zc, b.side * .32);
+    if (k % 5 < 3) put(awningGeo(1.6, .06, len - .4), awnMats[k % awnMats.length], faceX - b.side * .75, 3.35, b.zc, b.side * .32);
+  }
+  // awning slab: stripes run out from the wall, repeating along the street, on the top and underside too
+  function awningGeo(w: number, h: number, d: number) {
+    const g = new THREE.BoxGeometry(w, h, d), uv = g.attributes.uv as THREE.BufferAttribute, pos = g.attributes.position;
+    for (let i = 0; i < pos.count; i++) uv.setXY(i, (pos.getZ(i) + d / 2) / 2.4, .5);
+    return g;
   }
   // ground, road, pavements
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(1600, 2200), new THREE.MeshStandardMaterial({ color: 0x9ccf72, roughness: 1 }));
@@ -103,12 +109,17 @@ export function buildCity(scene: THREE.Scene, world: World): CityView {
   const roadTex = roadTexture(); roadTex.repeat.set(1, SPAN / 14);
   const road = new THREE.Mesh(new THREE.PlaneGeometry(R * 2, SPAN), new THREE.MeshStandardMaterial({ map: roadTex, roughness: .85 }));
   road.rotation.x = -Math.PI / 2; road.position.set(0, 0, MID); road.receiveShadow = true; city.add(road);
-  const walkTex = walkTexture(); walkTex.repeat.set(1, SPAN / WALK);
+  // the pavement runs right up to the building line (layout.sideX) so no grass strip shows at their feet
+  const PAVE = layout.sideX - R;
+  const walkTex = walkTexture(); walkTex.repeat.set(1, SPAN / PAVE);
+  const walkMat = new THREE.MeshStandardMaterial({ map: walkTex, roughness: .9 }), kerbMat = new THREE.MeshStandardMaterial({ color: 0xf2efe8, roughness: .8 });
+  const walkGeo = new THREE.BoxGeometry(PAVE, .24, SPAN), kerbGeo = new THREE.BoxGeometry(.27, .28, SPAN);
   for (const s of [-1, 1]) {
-    const w = new THREE.Mesh(new THREE.BoxGeometry(WALK, .24, SPAN), new THREE.MeshStandardMaterial({ map: walkTex, roughness: .9 }));
-    w.position.set(s * (R + WALK / 2), .12, MID); w.receiveShadow = true; city.add(w);
-    const kerb = new THREE.Mesh(new THREE.BoxGeometry(.25, .28, SPAN), new THREE.MeshStandardMaterial({ color: 0xf2efe8, roughness: .8 }));
-    kerb.position.set(s * (R + .12), .14, MID); city.add(kerb);
+    const w = new THREE.Mesh(walkGeo, walkMat);
+    w.position.set(s * (R + PAVE / 2), .12, MID); w.receiveShadow = true; city.add(w);
+    // kerb pokes 1 cm out past the pavement edge so their road-facing sides are not coplanar
+    const kerb = new THREE.Mesh(kerbGeo, kerbMat);
+    kerb.position.set(s * (R + .125), .14, MID); city.add(kerb);
   }
 
   layout.side.forEach(b => { block(b, true); shopfront(b); });
@@ -122,11 +133,18 @@ export function buildCity(scene: THREE.Scene, world: World): CityView {
 
   // soft dark band on the pavement where it meets the buildings (grounds them)
   const aoTex = canvasTex(64, 4, (c, w, h) => { const g = c.createLinearGradient(0, 0, w, 0); g.addColorStop(0, 'rgba(20,24,40,.55)'); g.addColorStop(1, 'rgba(20,24,40,0)'); c.fillStyle = g; c.fillRect(0, 0, w, h); });
+  const aoMat = new THREE.MeshBasicMaterial({ map: aoTex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -4 });
+  const aoGeo = new THREE.PlaneGeometry(2.4, SPAN);
   for (const s of [-1, 1]) {
-    const ao = new THREE.Mesh(new THREE.PlaneGeometry(2.4, SPAN), new THREE.MeshBasicMaterial({ map: aoTex, transparent: true, depthWrite: false }));
-    ao.rotation.x = -Math.PI / 2; if (s < 0) ao.rotation.z = Math.PI;
+    // texture is dark at u = 0 (local -x); turn it so the dark edge sits against the buildings
+    const ao = new THREE.Mesh(aoGeo, aoMat);
+    ao.rotation.x = -Math.PI / 2; if (s > 0) ao.rotation.z = Math.PI;
     ao.position.set(s * (layout.sideX - 1.2), .245, MID); city.add(ao);
   }
+
+  // street furniture must not stand inside the buildings that cross the road
+  const acrossBlds = level.course.filter(o => o.kind === 'bld');
+  const underBuilding = (dist: number, margin: number) => acrossBlds.some(o => dist > o.z - margin && dist < o.z + o.d + margin);
 
   // trees + lamps along the pavements (instanced)
   {
@@ -140,6 +158,7 @@ export function buildCity(scene: THREE.Scene, world: World): CityView {
     for (let z = level.behind; z > -LEN; z -= 16) {
       for (const s of [-1, 1]) {
         const x = s * (R + WALK - .9), tz = z - (s > 0 ? 8 : 0);
+        if (underBuilding(-tz, 1.3) || underBuilding(4 - tz, .4)) continue;   // would poke out of a building across the road
         m.makeTranslation(x, 1.0, tz); trunk.setMatrixAt(k, m);
         m.makeTranslation(x, 2.4, tz); crown.setMatrixAt(k, m);
         m.makeTranslation(s * (R + .7), 2.6, tz - 4); pole.setMatrixAt(k, m);
@@ -163,6 +182,7 @@ export function buildCity(scene: THREE.Scene, world: World): CityView {
   // distance signs every 50 m (left pavement)
   const signs = new THREE.Group(); city.add(signs);
   for (let d = 50; d < LEN; d += 50) {
+    if (underBuilding(d, 1.3)) continue;
     const g = new THREE.Group();
     const post = new THREE.Mesh(new THREE.CylinderGeometry(.07, .07, 3, 10), new THREE.MeshStandardMaterial({ color: 0xdfe3ea, metalness: .6, roughness: .3 })); post.position.y = 1.5; g.add(post);
     const b = new THREE.Mesh(new THREE.BoxGeometry(2.2, .9, .12), new THREE.MeshStandardMaterial({ map: signTexture(d + ' m', THEME.colors.blue, THEME.colors.sun), roughness: .5 }));
@@ -189,13 +209,17 @@ export function buildCity(scene: THREE.Scene, world: World): CityView {
     return g;
   }
   function carRow(jitter: number[]) {
-    const g = new THREE.Group();
-    layout.carRowXs.forEach((x, i) => { const c = toyCar(PARKED_COLS[i % PARKED_COLS.length]); c.rotation.y = Math.PI / 2 + jitter[i]; c.position.x = x; g.add(c); });
+    const g = new THREE.Group(), xs = layout.carRowXs;
+    g.position.x = -(xs[0] + xs[xs.length - 1]) / 2;   // centre the row so neither kerb end looks like a way round
+    // parked side-on, bumper to bumper: the row is a solid wall in the rules, so it must not show gaps,
+    // and side-on (1.7 m deep) matches its 2.2 m collision depth where nose-on (3.4 m) overhung it
+    layout.carRowXs.forEach((x, i) => { const c = toyCar(PARKED_COLS[i % PARKED_COLS.length]); c.rotation.y = (i % 2 ? Math.PI : 0) + jitter[i] * .5; c.position.x = x; g.add(c); });
     return g;
   }
   function bus(gap: number) {
     const g = new THREE.Group(), Y = paint(0xffc21a), hg = level.busGapHalf;
-    for (const x of [gap - hg - 4.4, gap + hg + 4.4]) {
+    // buses are 8.6 m long: their inner ends sit exactly on the rules' gap edges (gap ± busGapHalf)
+    for (const x of [gap - hg - 4.3, gap + hg + 4.3]) {
       const b = new THREE.Group(); b.position.x = x; b.rotation.y = Math.PI / 2; g.add(b);
       rbox(b, 2.4, 2.8, 8.6, .45, Y, 0, 1.75, 0);
       rbox(b, 2.46, .9, 7.8, .2, MAT.glass(), 0, 2.35, 0);
@@ -210,13 +234,19 @@ export function buildCity(scene: THREE.Scene, world: World): CityView {
     const span = R + WALK + .4, gw = level.alleyWidth;
     const pieces = o.gap == null ? [[-span, span]] : [[-span, o.gap - gw / 2], [o.gap + gw / 2, span]];
     pieces.forEach(([x0, x1], j) => building((x0 + x1) / 2, 0, x1 - x0, o.h, o.d, i * 3 + j, group));
+    // rooftop sign over the wider piece, kept off the alley so its posts stand on the roof, not on air
     const [bg, fg] = SIGN_COLS[i % SIGN_COLS.length];
-    const sw = Math.min(12, o.h * 1.1 + 4);
-    const sg = new THREE.Mesh(new THREE.BoxGeometry(sw, Math.min(3, 1.4 + o.h * .06), .3), new THREE.MeshStandardMaterial({ map: signTexture(o.sign ?? '', bg, fg), roughness: .5, emissive: 0x222222 }));
-    sg.position.set(o.gap == null ? 0 : (o.gap < 0 ? 3.5 : -3.5), o.h + 1.6 + o.h * .03, o.d / 2 - .3); group.add(sg);
-    for (const s of [-1, 1]) { const pp = new THREE.Mesh(new THREE.CylinderGeometry(.08, .08, 1.4, 8), MAT.chrome()); pp.position.set(sg.position.x + s * sw * .35, o.h + .7, o.d / 2 - .3); group.add(pp); }
-    if (o.gap != null) {  // a little arch over the alley so kids can see it's a way through
-      const arch = new THREE.Mesh(new THREE.TorusGeometry(gw / 2, .18, 10, 24, Math.PI), paint(0xffd21f)); arch.position.set(o.gap, 3.4, o.d / 2 + .05); group.add(arch);
+    const [px0, px1] = pieces.reduce((a, b) => (b[1] - b[0] > a[1] - a[0] ? b : a));
+    const sw = Math.min(12, o.h * 1.1 + 4, px1 - px0 - .6), sh = Math.min(3, 1.4 + o.h * .06);
+    const sx = THREE.MathUtils.clamp(0, px0 + sw / 2 + .3, px1 - sw / 2 - .3);
+    const sy = o.h + 1.6 + o.h * .03, roofTop = o.h + 1.0, postLen = sy - sh / 2 - roofTop + .3;
+    const sg = new THREE.Mesh(new THREE.BoxGeometry(sw, sh, .3), new THREE.MeshStandardMaterial({ map: signTexture(o.sign ?? '', bg, fg), roughness: .5, emissive: 0x222222 }));
+    sg.position.set(sx, sy, o.d / 2 - .3); group.add(sg);
+    for (const s of [-1, 1]) { const pp = new THREE.Mesh(new THREE.CylinderGeometry(.08, .08, postLen, 8), MAT.chrome()); pp.position.set(sx + s * sw * .35, roofTop - .1 + postLen / 2, o.d / 2 - .3); group.add(pp); }
+    if (o.gap != null) {  // a yellow gateway round the alley mouth so kids can see it's a way through
+      const r = gw / 2 + .18, gate = paint(0xffd21f), fz = o.d / 2 + .25;
+      const arch = new THREE.Mesh(new THREE.TorusGeometry(r, .18, 10, 24, Math.PI), gate); arch.position.set(o.gap, 3.4, fz); group.add(arch);
+      for (const s of [-1, 1]) { const leg = new THREE.Mesh(new THREE.CylinderGeometry(.18, .2, 3.4, 12), gate); leg.position.set(o.gap + s * r, 1.7, fz); group.add(leg); }
     }
     return group;
   }
@@ -226,6 +256,27 @@ export function buildCity(scene: THREE.Scene, world: World): CityView {
     city.add(g); mergeStatic(g);
     return g;
   });
+
+  // green "go" arrows painted on the road in front of each bus gap and alley: one merged mesh, one draw call
+  {
+    const arrows: THREE.BufferGeometry[] = [];
+    level.course.forEach(o => {
+      if (o.gap == null || (o.kind !== 'bus' && o.kind !== 'bld')) return;
+      const gapW = o.kind === 'bus' ? level.busGapHalf * 2 : level.alleyWidth;
+      const a = new THREE.PlaneGeometry(1, 1.5); a.rotateX(-Math.PI / 2); a.scale(Math.min(2.4, gapW * .8), 1, 2.4);
+      a.translate(o.gap, .02, -(o.z - 2.6)); arrows.push(a);
+    });
+    if (arrows.length) {
+      const tex = canvasTex(128, 192, (c, w, h) => {
+        c.lineJoin = 'round';
+        const path = () => { c.beginPath(); c.moveTo(w / 2, 10); c.lineTo(w - 10, 78); c.lineTo(w * .7, 78); c.lineTo(w * .7, h - 10); c.lineTo(w * .3, h - 10); c.lineTo(w * .3, 78); c.lineTo(10, 78); c.closePath(); };
+        path(); c.fillStyle = '#2fd24a'; c.fill(); c.strokeStyle = '#ffffff'; c.lineWidth = 8; c.stroke();
+      });
+      const m = new THREE.Mesh(mergeGeometries(arrows), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -4 }));
+      m.renderOrder = 1; city.add(m);
+      arrows.forEach(g => g.dispose());
+    }
+  }
 
   /* ---------- coins ---------- */
   const coinGeo = new THREE.CylinderGeometry(.55, .55, .14, 18), coinMat = paint(0xffc21a, { metalness: .95, roughness: .18, emissive: 0x7a4a00, emissiveIntensity: .6 });

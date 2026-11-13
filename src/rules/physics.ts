@@ -25,6 +25,8 @@ export const PHYSICS = {
   rampStartShare: .5,         // the catapult flings the car up the ramp at this share of launch speed
 };
 
+const MAX_DT = .1;
+
 export type ShotMode = 'ramp' | 'air' | 'roll' | 'crash' | 'stop';
 export type ShotEvent = 'swerve' | 'burn' | 'armed' | 'zap' | 'takeoff' | 'bounce' | 'land' | 'stop';
 
@@ -45,7 +47,7 @@ export interface Shot {
   fuel: number;               // BOOST seconds left
   burn: number;               // special flame seconds left
   smash: boolean;             // next obstacle hit breaks instead of stopping us
-  swerve: { target: CourseItem; x: number } | null;
+  swerve: { target: CourseItem; x: number; low: boolean; course: readonly CourseItem[] } | null;
   specialUsed: boolean;
   boosting: boolean;
   t: number;
@@ -56,6 +58,7 @@ export interface FlightInput { boost: boolean }
 
 export function launchSpeed(car: CarDef, lv: UpgradeLevels, power: number) {
   const P = PHYSICS;
+  power = Number.isFinite(power) ? Math.max(0, Math.min(1, power)) : 0;
   return (car.baseSpeed + P.enginePerLevel * lv.engine) * (P.minPowerFactor + (1 - P.minPowerFactor) * power);
 }
 
@@ -63,6 +66,8 @@ export function launchSpeed(car: CarDef, lv: UpgradeLevels, power: number) {
    speeding up until it leaves the lip at launch speed. */
 export function makeShot(car: CarDef, lv: UpgradeLevels, special: SpecialEffect, power: number, heading: number,
                          ramp: RampGeo, pullBack = 0): Shot {
+  if (!Number.isFinite(heading)) heading = 0;
+  pullBack = Number.isFinite(pullBack) ? Math.max(0, pullBack) : 0;
   const sp = launchSpeed(car, lv, power), v0 = sp * PHYSICS.rampStartShare;
   const s0 = -pullBack, p = rampPoint(ramp, s0);
   return {
@@ -101,16 +106,15 @@ export function nextBlocker(course: readonly CourseItem[], d: number) {
 
 /* Press the action button. Returns false if it can't be used now. */
 export function useSpecial(s: Shot, course: readonly CourseItem[]): boolean {
-  if (s.specialUsed || s.mode === 'ramp' || s.mode === 'stop' || s.mode === 'crash') return false;
+  if (s.specialUsed || s.mode === 'stop' || s.mode === 'crash') return false;
   s.specialUsed = true;
   const e = s.special;
   if (e.kind === 'swerve') {
     const o = nextBlocker(course, distanceOf(s));
-    s.swerve = o ? { target: o, x: o.gap ?? 0 } : null;
+    s.swerve = o ? { target: o, x: o.gap ?? 0, low: false, course } : null;
     s.events.push('swerve');
   } else if (e.kind === 'burn') {
-    s.burn = e.seconds;
-    if (s.mode === 'roll') s.mode = 'air';
+    s.burn = e.seconds;   // in a roll the roll step pushes; flipping to 'air' only caused a fake 'land' thud
     s.events.push('burn');
   } else if (e.kind === 'smash') {
     s.smash = true;
@@ -123,7 +127,15 @@ export function useSpecial(s: Shot, course: readonly CourseItem[]): boolean {
 
 function steerSwerve(s: Shot, dt: number) {
   if (!s.swerve || s.mode === 'crash') return;
-  const o = s.swerve.target, d = distanceOf(s), past = d > o.z + o.d + 2;
+  let o = s.swerve.target;
+  const d = distanceOf(s);
+  if (d > o.z - 2 && d < o.z + o.d + 2 && s.y < o.h) s.swerve.low = true;   // actually going through it
+  if (d > o.z + o.d + 2 && !s.swerve.low) {
+    // flew over it: keep the swerve for the next bus or building the car meets
+    const n = nextBlocker(s.swerve.course, d);
+    if (n) { o = n; s.swerve = { ...s.swerve, target: n, x: n.gap ?? 0 }; }
+  }
+  const past = d > o.z + o.d + 2;
   const want = past ? 0 : Math.atan2(-(s.swerve.x - s.x), Math.max(4, o.z - d));
   const step = PHYSICS.swerveTurnRate * dt;
   const diff = Math.max(-step, Math.min(step, want - s.heading));
@@ -138,6 +150,8 @@ function steerSwerve(s: Shot, dt: number) {
 /* Advance one fixed step. */
 export function stepShot(s: Shot, dt: number, inp: FlightInput | null) {
   const P = PHYSICS, lv = s.lv;
+  if (!(dt > 0)) return;            // zero, negative or NaN dt: nothing happens
+  dt = Math.min(dt, MAX_DT);        // a frame hitch never becomes one giant leap
   s.t += dt; s.boosting = false;
   if (s.mode === 'stop') return;
   if (s.mode === 'ramp') { stepRamp(s, dt); return; }
@@ -146,7 +160,7 @@ export function stepShot(s: Shot, dt: number, inp: FlightInput | null) {
   if (s.mode === 'air' || s.mode === 'crash') {
     let g = P.gravity;
     if (s.mode === 'air') {
-      if (inp?.boost && s.fuel > 0) { s.fuel -= dt; s.vx += fx * P.boostPush * dt; s.vz += fz * P.boostPush * dt; s.vy += P.boostLift * dt; s.boosting = true; }
+      if (inp?.boost && s.fuel > 0) { s.fuel = Math.max(0, s.fuel - dt); s.vx += fx * P.boostPush * dt; s.vz += fz * P.boostPush * dt; s.vy += P.boostLift * dt; s.boosting = true; }
       if (s.burn > 0) { s.burn -= dt; s.vx += fx * P.burnPush * dt; s.vz += fz * P.burnPush * dt; s.vy += P.burnLift * dt; s.boosting = true; }
       if (s.vy < 0 && lv.wings > 0) g *= 1 - P.wingGlidePerLevel * lv.wings;
     }
@@ -170,7 +184,8 @@ export function stepShot(s: Shot, dt: number, inp: FlightInput | null) {
     if (s.burn > 0) { s.burn -= dt; sp += P.burnRollPush * dt; s.boosting = true; }
     sp -= (P.rollFriction - P.rollFrictionPerWheel * lv.wheels) * dt;
     if (sp <= P.stopSpeed) { s.vx = s.vz = 0; s.mode = 'stop'; s.events.push('stop'); return; }
-    const a = Math.atan2(s.vx, s.vz);
+    // with no speed left, push along the heading rather than atan2(0, 0) = backwards
+    const a = Math.hypot(s.vx, s.vz) > 1e-6 ? Math.atan2(s.vx, s.vz) : Math.atan2(fx, fz);
     s.vx = Math.sin(a) * sp; s.vz = Math.cos(a) * sp;
     s.x += s.vx * dt; s.z += s.vz * dt;
   }

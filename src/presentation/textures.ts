@@ -26,43 +26,87 @@ export const walkTexture = () => canvasTex(128, 128, (c, w, h) => {
   for (let i = 0; i <= 4; i++) { c.beginPath(); c.moveTo(0, i * 32); c.lineTo(w, i * 32); c.stroke(); c.beginPath(); c.moveTo(i * 32, 0); c.lineTo(i * 32, h); c.stroke(); }
 }, true);
 
-/* Two windows per tile: recessed frame, sill, sky reflection, some lit or with curtains.
-   White wall so the building colour tints it. */
-export const windowTexture = () => canvasTex(256, 256, (c, w, h) => {
-  c.fillStyle = '#ffffff'; c.fillRect(0, 0, w, h);
-  c.fillStyle = '#eeeeee'; c.fillRect(0, h - 22, w, 22);
-  c.fillStyle = 'rgba(0,0,0,.05)'; for (let y = 8; y < h - 22; y += 16) c.fillRect(0, y, w, 2);
-  for (let i = 0; i < 2; i++) {
-    const x = 28 + i * 120, y = 40, ww = 84, wh = 136;
-    c.fillStyle = '#c9c9c9'; c.fillRect(x - 6, y - 6, ww + 12, wh + 12);         // recess
-    const lit = Math.random() < .25, g = c.createLinearGradient(x, y, x + ww * .6, y + wh);
-    if (lit) { g.addColorStop(0, '#fff6c8'); g.addColorStop(1, '#ffd77a'); }
-    else { g.addColorStop(0, '#9fd0ff'); g.addColorStop(.55, '#4f86c6'); g.addColorStop(1, '#2d4f86'); }
-    c.fillStyle = g; c.fillRect(x, y, ww, wh);
-    if (!lit && Math.random() < .35) { c.fillStyle = ['#ff9fc4', '#ffd21f', '#9ad66b'][i % 3]; c.fillRect(x, y, ww * .22, wh); c.fillRect(x + ww * .78, y, ww * .22, wh); }
-    c.fillStyle = 'rgba(255,255,255,.45)';                                          // reflection streak
-    c.beginPath(); c.moveTo(x + 10, y + wh); c.lineTo(x + 34, y); c.lineTo(x + 48, y); c.lineTo(x + 24, y + wh); c.fill();
-    c.fillStyle = '#ffffff'; c.fillRect(x + ww / 2 - 4, y, 8, wh); c.fillRect(x, y + wh * .42, ww, 7);   // frame bars
-    c.fillStyle = '#ffffff'; c.fillRect(x - 12, y + wh + 6, ww + 24, 10);            // sill
-    c.fillStyle = 'rgba(0,0,0,.18)'; c.fillRect(x - 12, y + wh + 16, ww + 24, 4);
-  }
-}, true);
+/* A colour texture plus a matching wall mask (white = wall, black = glass and frames), drawn by the
+   same function. tintWalls() uses the mask so only the wall takes the building colour: the glass
+   stays sky blue on a red building instead of going muddy. */
+export interface MaskedTex { map: THREE.Texture; mask: THREE.Texture }
+function masked(w: number, h: number, draw: (c: CanvasRenderingContext2D, w: number, h: number, mask: boolean) => void): MaskedTex {
+  const map = canvasTex(w, h, (c, w, h) => draw(c, w, h, false), true);
+  const mask = canvasTex(w, h, (c, w, h) => draw(c, w, h, true), true);
+  mask.colorSpace = THREE.NoColorSpace;
+  return { map, mask };
+}
 
-/* Shop front, 4 m wide: tinted frame, a big window and a glass door. */
-export const shopTexture = () => canvasTex(256, 192, (c, w, h) => {
-  c.fillStyle = '#ffffff'; c.fillRect(0, 0, w, h);
-  c.fillStyle = 'rgba(255,255,255,.8)'; c.fillRect(0, 0, w, 30);
-  const pane = (x: number, y: number, pw: number, ph: number) => {
-    const g = c.createLinearGradient(x, y, x + pw, y + ph);
-    g.addColorStop(0, '#bfe3ff'); g.addColorStop(.5, '#5d8fcf'); g.addColorStop(1, '#2a3f6e');
-    c.fillStyle = g; c.fillRect(x, y, pw, ph);
-    c.fillStyle = 'rgba(255,255,255,.35)'; c.beginPath(); c.moveTo(x + pw * .15, y + ph); c.lineTo(x + pw * .45, y); c.lineTo(x + pw * .6, y); c.lineTo(x + pw * .3, y + ph); c.fill();
+/* Material tint applies to the wall only (mask in alphaMap's green channel, not used for opacity). */
+export function tintWalls(m: THREE.MeshStandardMaterial) {
+  m.onBeforeCompile = sh => {
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <map_fragment>', `
+        vec4 tx = texture2D( map, vMapUv );
+        float wall = texture2D( alphaMap, vAlphaMapUv ).g;
+        diffuseColor.rgb = mix( tx.rgb, diffuseColor.rgb * tx.rgb, wall );`)
+      .replace('#include <alphamap_fragment>', '');
   };
-  pane(14, 40, 150, 120);
-  pane(182, 40, 60, 146);
-  c.fillStyle = '#ffd21f'; c.fillRect(230, 108, 6, 16);                        // door handle
-  c.fillStyle = 'rgba(0,0,0,.25)'; c.fillRect(14, 160, 150, 26);               // kick plate
-}, true);
+  m.customProgramCacheKey = () => 'tintWalls';
+  return m;
+}
+
+function glass(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number) {
+  const g = c.createLinearGradient(x, y, x + w * .5, y + h);
+  g.addColorStop(0, '#d4f0ff'); g.addColorStop(.45, '#6cc0ff'); g.addColorStop(1, '#2f86e6');
+  c.fillStyle = g; c.fillRect(x, y, w, h);
+  c.fillStyle = 'rgba(255,255,255,.55)';                                     // glossy diagonal reflections
+  c.beginPath(); c.moveTo(x + w * .08, y + h * .62); c.lineTo(x + w * .62, y); c.lineTo(x + w * .86, y); c.lineTo(x + w * .08, y + h * .9); c.fill();
+  c.fillStyle = 'rgba(255,255,255,.3)';
+  c.beginPath(); c.moveTo(x + w * .5, y + h); c.lineTo(x + w, y + h * .35); c.lineTo(x + w, y + h * .5); c.lineTo(x + w * .64, y + h); c.fill();
+}
+function roundRect(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  c.beginPath(); c.moveTo(x + r, y); c.arcTo(x + w, y, x + w, y + h, r); c.arcTo(x + w, y + h, x, y + h, r);
+  c.arcTo(x, y + h, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath();
+}
+
+/* Two windows per tile in the toy-town style: chunky rounded grey frames, cross bars, glossy blue
+   glass and a fat sill. White wall so the building colour tints it. */
+export const windowTextures = () => {
+  return masked(512, 512, (c, w, h, mask) => {
+    const frame = mask ? '#000' : '#d5dae3', shade = mask ? '#000' : '#a9b1bf';
+    c.fillStyle = '#ffffff'; c.fillRect(0, 0, w, h);
+    if (!mask) {
+      c.fillStyle = 'rgba(0,0,0,.035)'; for (let y = 14; y < h; y += 28) c.fillRect(0, y, w, 3);   // faint siding lines
+      c.fillStyle = 'rgba(0,0,0,.08)'; c.fillRect(0, h - 30, w, 30);                              // floor band
+      c.fillStyle = 'rgba(255,255,255,.6)'; c.fillRect(0, h - 30, w, 5);
+    }
+    for (let i = 0; i < 2; i++) {
+      const x = 60 + i * 236, y = 70, ww = 156, wh = 300;
+      if (!mask) { c.fillStyle = 'rgba(20,30,60,.16)'; roundRect(c, x - 14, y - 6, ww + 34, wh + 34, 30); c.fill(); }  // drop shadow
+      c.fillStyle = shade; roundRect(c, x - 18, y - 18, ww + 36, wh + 36, 30); c.fill();
+      c.fillStyle = frame; roundRect(c, x - 18, y - 22, ww + 36, wh + 34, 30); c.fill();
+      if (!mask) {
+        c.save(); roundRect(c, x, y, ww, wh, 14); c.clip(); glass(c, x, y, ww, wh); c.restore();
+        c.fillStyle = 'rgba(0,0,0,.18)'; c.fillRect(x, y, ww, 8);                          // inner shadow under the top frame
+      }
+      c.fillStyle = frame; c.fillRect(x + ww / 2 - 8, y, 16, wh); c.fillRect(x, y + wh * .42 - 8, ww, 16);   // cross bars
+      c.fillStyle = shade; roundRect(c, x - 30, y + wh + 12, ww + 60, 26, 10); c.fill();                     // sill
+      c.fillStyle = frame; roundRect(c, x - 30, y + wh + 8, ww + 60, 22, 10); c.fill();
+    }
+  });
+};
+
+/* Shop front, 4 m wide: frame (takes the shop colour), a big window and a glass door. */
+export const shopTextures = () => masked(512, 384, (c, w, h, mask) => {
+  const frame = mask ? '#000' : '#e4e8ef';
+  c.fillStyle = '#ffffff'; c.fillRect(0, 0, w, h);
+  const pane = (x: number, y: number, pw: number, ph: number) => {
+    c.fillStyle = mask ? '#000' : '#aab3c2'; roundRect(c, x - 16, y - 14, pw + 32, ph + 30, 18); c.fill();
+    c.fillStyle = frame; roundRect(c, x - 16, y - 18, pw + 32, ph + 30, 18); c.fill();
+    if (mask) { c.fillStyle = '#000'; c.fillRect(x, y, pw, ph); return; }
+    c.save(); roundRect(c, x, y, pw, ph, 10); c.clip(); glass(c, x, y, pw, ph); c.restore();
+  };
+  pane(36, 70, 290, 232);
+  pane(370, 70, 106, 296);
+  c.fillStyle = mask ? '#000' : '#ffd21f'; roundRect(c, 450, 200, 14, 44, 6); c.fill();      // door handle
+  c.fillStyle = mask ? '#000' : '#2b2f3a'; roundRect(c, 20, 318, 322, 52, 10); c.fill();       // kick plate
+});
 
 /* Striped canvas awning in one colour plus white. */
 export const awningTexture = (col: string) => canvasTex(128, 32, (c, w, h) => {

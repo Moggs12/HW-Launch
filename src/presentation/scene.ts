@@ -16,7 +16,8 @@ const LEGACY = Math.PI;
 export function createStage(canvas: HTMLCanvasElement): Stage3D {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-  renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.0;
+  // Neutral keeps the bold toy colours saturated (ACES washes reds and yellows towards pastel)
+  renderer.toneMapping = THREE.NeutralToneMapping; renderer.toneMappingExposure = 1.0;
   renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(55, 1, .1, 1400);
@@ -47,6 +48,11 @@ export function createStage(canvas: HTMLCanvasElement): Stage3D {
   sp.position.set(20, 30, 10); env.add(sp);
   const strip = new THREE.Mesh(new THREE.PlaneGeometry(60, 6), new THREE.MeshBasicMaterial({ color: new THREE.Color(1.6, 1.6, 1.8), side: THREE.DoubleSide }));
   strip.position.set(0, 40, 0); strip.rotation.x = Math.PI / 2; env.add(strip);
+  // studio softboxes either side and a warm rim behind: crisp showroom highlights along the car bodies
+  for (const [x, z, col] of [[-42, 0, [3, 3, 3.2]], [42, 0, [3, 3, 3.2]], [0, -42, [3.4, 2.4, 1.4]]] as const) {
+    const box = new THREE.Mesh(new THREE.PlaneGeometry(z ? 50 : 14, 10), new THREE.MeshBasicMaterial({ color: new THREE.Color(...col), side: THREE.DoubleSide }));
+    box.position.set(x, 8, z); box.lookAt(0, 4, 0); env.add(box);
+  }
   scene.environment = pm.fromScene(env, .02).texture;
 
   scene.add(new THREE.HemisphereLight(0xd6eaff, 0x7d6b4c, .45 * LEGACY));

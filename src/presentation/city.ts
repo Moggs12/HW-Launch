@@ -5,11 +5,14 @@ import { THEME } from '../content/theme';
 import type { Block, SideBlock } from '../rules/layout';
 import type { World } from '../rules/run';
 import { MAT, V2, makeWheel, mergeStatic, paint, rbox, slab } from './cars/kit';
-import { awningTexture, canvasTex, roadTexture, shopTexture, signTexture, walkTexture, windowTexture } from './textures';
+import { awningTexture, canvasTex, roadTexture, shopTextures, signTexture, tintWalls, walkTexture, windowTextures } from './textures';
 
 /* Draws the toy city from the level data and its layout. No game decisions here. */
 
-const BLD_COLORS = [0xff8a65, 0xffc94d, 0x7fc8f8, 0x9ad66b, 0xc89bf0, 0xff9fc4, 0x5fd3c3, 0xf2f2ee, 0x8fa8ff, 0xffb36b];
+// bold toy-box colours; each building's cornice uses a contrasting trim (TRIM_FOR picks it)
+const BLD_COLORS = [0xff4a2e, 0xffc414, 0x2f8cff, 0x5fcf3a, 0x9b5cff, 0xff5fa8, 0x14c2b0, 0xff8a14, 0xfff3dc, 0x4f6dff];
+const TRIMS = [0xffffff, 0xffd21f, 0xe8231c, 0x1440c4];
+const TRIM_FOR = [1, 3, 1, 0, 1, 3, 0, 3, 2, 1];
 const SIGN_COLS: [string, string][] = [[THEME.colors.red, THEME.colors.sun], [THEME.colors.blue, '#ffffff'], [THEME.colors.flame, '#ffffff'], ['#7b3fd1', THEME.colors.sun], ['#0f9d58', '#ffffff']];
 const SHOP_FRAMES = [0x2b3a67, 0x8a2b2b, 0x1f6b52, 0x5a3d8a];
 const AWNING_COLS = ['#e8231c', '#1440c4', '#0f9d58', '#ff7a1a', '#7b3fd1'];
@@ -24,13 +27,15 @@ export interface CityView {
 export function buildCity(scene: THREE.Scene, world: World): CityView {
   const { level, layout } = world, LEN = level.length, R = level.roadHalf, WALK = level.walk;
   const city = new THREE.Group(); scene.add(city);
-  const winTex = windowTexture();
-  // vertex colours darken each building towards its base: a cheap stand-in for ambient occlusion
-  const bldMats = BLD_COLORS.map(c => new THREE.MeshStandardMaterial({ color: c, map: winTex, roughness: .75, metalness: .02, vertexColors: true }));
-  const trimMat = new THREE.MeshStandardMaterial({ color: 0xfff8ea, roughness: .7 });
+  const win = windowTextures();
+  // vertex colours darken each building towards its base: a cheap stand-in for ambient occlusion.
+  // Only the wall takes the colour (tintWalls), so windows stay glossy blue.
+  const bldMats = BLD_COLORS.map(c => tintWalls(new THREE.MeshStandardMaterial({ color: c, map: win.map, alphaMap: win.mask, roughness: .55, metalness: .02, vertexColors: true })));
+  const trimMats = TRIMS.map(c => new THREE.MeshStandardMaterial({ color: c, roughness: .45 }));
+  const ledgeMat = new THREE.MeshStandardMaterial({ color: 0xfffaf0, roughness: .6 });
   const roofMat = new THREE.MeshStandardMaterial({ color: 0x7d838f, roughness: .9 });
-  const shopTex = shopTexture();
-  const shopMats = SHOP_FRAMES.map(c => new THREE.MeshStandardMaterial({ color: c, map: shopTex, roughness: .35, metalness: .1 }));
+  const shop = shopTextures();
+  const shopMats = SHOP_FRAMES.map(c => tintWalls(new THREE.MeshStandardMaterial({ color: c, map: shop.map, alphaMap: shop.mask, roughness: .35, metalness: .1 })));
   const awnMats = AWNING_COLS.map(c => new THREE.MeshStandardMaterial({ map: awningTexture(c), roughness: .8, side: THREE.DoubleSide }));
   const acMat = new THREE.MeshStandardMaterial({ color: 0xd9dde4, roughness: .5, metalness: .3 });
   const tankMat = new THREE.MeshStandardMaterial({ color: 0xa8714a, roughness: .85 });
@@ -65,16 +70,21 @@ export function buildCity(scene: THREE.Scene, world: World): CityView {
     return g;
   }
   function building(x: number, z: number, w: number, h: number, d: number, ci: number, group?: THREE.Object3D, roofProps = false) {
-    put(bodyGeo(w, h, d), bldMats[ci % bldMats.length], x, h / 2, z, 0, group);
-    put(new THREE.BoxGeometry(w + .5, .45, d + .5), trimMat, x, h + .22, z, 0, group);
-    put(new THREE.BoxGeometry(w - .3, .12, d - .3), roofMat, x, h + .5, z, 0, group);
+    const c = ci % bldMats.length, trim = trimMats[TRIM_FOR[c]];
+    put(bodyGeo(w, h, d), bldMats[c], x, h / 2, z, 0, group);
+    // chunky layered cornice in a contrasting colour, a slim ledge under it, a band over the ground floor
+    put(new THREE.BoxGeometry(w + .35, .3, d + .35), ledgeMat, x, h - .15, z, 0, group);
+    put(new THREE.BoxGeometry(w + .9, .75, d + .9), trim, x, h + .37, z, 0, group);
+    put(new THREE.BoxGeometry(w + .5, .25, d + .5), trim, x, h + .87, z, 0, group);
+    if (h > 7) put(new THREE.BoxGeometry(w + .3, .45, d + .3), trim, x, 3.85, z, 0, group);
+    put(new THREE.BoxGeometry(w - .3, .12, d - .3), roofMat, x, h + 1.0, z, 0, group);
     if (!roofProps) return;
     const r = (ci * 7919 + Math.round(z * 13)) % 10;   // stable per building
-    if (r < 3) put(new THREE.BoxGeometry(1.8, 1, 1.3), acMat, x + (r - 1) * w * .2, h + 1.05, z + d * .15);
+    if (r < 3) put(new THREE.BoxGeometry(1.8, 1, 1.3), acMat, x + (r - 1) * w * .2, h + 1.55, z + d * .15);
     else if (r < 5) {
-      put(new THREE.CylinderGeometry(1, 1, 1.8, 14), tankMat, x, h + 2.1, z - d * .2);
-      put(new THREE.ConeGeometry(1.15, .7, 14), tankMat, x, h + 3.35, z - d * .2);
-      put(new THREE.BoxGeometry(1.6, 1.2, 1.6), acMat, x, h + .65, z - d * .2);
+      put(new THREE.CylinderGeometry(1, 1, 1.8, 14), tankMat, x, h + 2.6, z - d * .2);
+      put(new THREE.ConeGeometry(1.15, .7, 14), tankMat, x, h + 3.85, z - d * .2);
+      put(new THREE.BoxGeometry(1.6, 1.2, 1.6), acMat, x, h + 1.15, z - d * .2);
     }
   }
   const block = (b: Block, props = false) => building(b.x, b.zc, b.w, b.h, b.d, b.colour, undefined, props);

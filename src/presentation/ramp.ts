@@ -16,19 +16,36 @@ export function buildRamp(scene: THREE.Scene, g: RampGeo, def: RampDef) {
   const cmds: Cmd[] = [['m', prof[0].z, -.02]];
   for (const p of prof) cmds.push(['l', p.z, p.y]);
   cmds.push(['l', 0, -.02], ['l', prof[0].z, -.02]);
-  slab(grp, cmds, W, .04, paint(hex(THEME.colors.red)));
+  // the profile faces (the ramp's sides) get a blue steel lattice, the top a deep glossy red
+  const wedge = slab(grp, cmds, W, .04, paint(0xd0120b, { clearcoat: .5, roughness: .4 }));
+  const lattice = canvasTex(256, 256, (c, w, h) => {
+    c.fillStyle = '#0a1c5c'; c.fillRect(0, 0, w, h);
+    c.lineCap = 'round';
+    const beam = (x0: number, y0: number, x1: number, y1: number, wd: number) => {
+      c.strokeStyle = '#0c2f9e'; c.lineWidth = wd + 8; c.beginPath(); c.moveTo(x0, y0 + 4); c.lineTo(x1, y1 + 4); c.stroke();
+      c.strokeStyle = '#2a6bff'; c.lineWidth = wd; c.beginPath(); c.moveTo(x0, y0); c.lineTo(x1, y1); c.stroke();
+      c.strokeStyle = 'rgba(255,255,255,.35)'; c.lineWidth = 4; c.beginPath(); c.moveTo(x0, y0 - wd / 3); c.lineTo(x1, y1 - wd / 3); c.stroke();
+    };
+    beam(10, 10, w - 10, h - 10, 20); beam(w - 10, 10, 10, h - 10, 20);
+    beam(0, 12, w, 12, 26); beam(0, h - 12, w, h - 12, 26); beam(12, 0, 12, h, 26); beam(w - 12, 0, w - 12, h, 26);
+    c.fillStyle = '#ffd21f';
+    for (const [x, y] of [[12, 12], [w - 12, 12], [12, h - 12], [w - 12, h - 12], [w / 2, h / 2]]) { c.beginPath(); c.arc(x, y, 9, 0, 7); c.fill(); }
+  }, true);
+  lattice.repeat.set(1 / 2.4, 1 / 2.4);
+  const inner = wedge.children[0] as THREE.Mesh;
+  inner.material = [new THREE.MeshStandardMaterial({ map: lattice, roughness: .45, metalness: .3 }), inner.material as THREE.Material];
 
   // a darker driving lane down the middle
   const lane: Cmd[] = [['m', prof[0].z, .01]];
   for (const p of prof) lane.push(['l', p.z, p.y + .03]);
   for (let i = prof.length - 1; i >= 0; i--) lane.push(['l', prof[i].z, Math.max(.01, prof[i].y - .2)]);
-  slab(grp, lane, 3.2, 0, paint(0xb81812, { clearcoat: .4, roughness: .5 }));
+  slab(grp, lane, 3.2, 0, paint(0x9e0d08, { clearcoat: .4, roughness: .5 }));
 
   // side rails following the curve, on little posts
   const railMat = paint(hex(THEME.colors.sun));
   for (const s of [-1, 1]) {
     const x = s * (W / 2 - .15);
-    tube(grp, prof.map(p => [x, p.y + .45, p.z] as P3), .1, railMat);
+    tube(grp, prof.map(p => [x, p.y + .45, p.z] as P3), .14, railMat);
     for (let i = 0; i < prof.length; i += 4) {
       const p = prof[i];
       rbox(grp, .08, .45, .08, .02, MAT.chrome(), x, p.y + .22, p.z);

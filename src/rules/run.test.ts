@@ -4,6 +4,8 @@ import { CITY } from '../content/level';
 import { REWARDS } from '../content/upgrades';
 import { AIM, canLaunch } from './aim';
 import { runReward } from './economy';
+import { REACH } from './collisions';
+import { PHYSICS } from './physics';
 import { buildWorld, Run, simulate, STEP, type RunEvent } from './run';
 import type { UpgradeLevels } from './save';
 
@@ -98,12 +100,20 @@ describe('one launch, end to end', () => {
     expect(flight).toEqual(['takeoff', 'land', 'stop']);
   });
 
-  it('a crash fires once and the car stops in front of what it hit', () => {
-    const { events, run } = play(0, lvAt(0), 1, 0, false);
-    expect(run.crashed).toBe(true);
-    expect(events.filter(e => e.type === 'crash')).toHaveLength(1);
-    const hitZ = Math.min(...world.parts.filter(p => p.z0 > -run.shot.z).map(p => p.z0));
-    expect(hitZ - -run.shot.z).toBeCloseTo(1.9, 1);
+  it('a crash fires once and the car skids a couple of metres through what it hit, then stops', () => {
+    for (let car = 0; car < CARS.length; car++) for (let L = 0; L <= 3; L++) {
+      const { events, run } = play(car, lvAt(L), 1, 0, false);
+      const crashes = events.filter(e => e.type === 'crash');
+      if (!run.crashed) continue;
+      expect(crashes).toHaveLength(1);
+      const c = crashes[0] as Extract<RunEvent, { type: 'crash' }>;
+      expect(c.speed).toBeGreaterThanOrEqual(0);
+      if (c.item === null) continue;                       // a side scrape
+      const touch = world.parts.find(p => p.item === c.item)!.z0 - REACH, slid = -run.shot.z - touch;
+      expect(slid, `car ${car} L${L}`).toBeGreaterThan(PHYSICS.crashSlideWallMax - .05);
+      expect(slid, `car ${car} L${L}`).toBeLessThanOrEqual(PHYSICS.crashSlideMax + .05);
+      expect(run.shot.mode).toBe('stop');
+    }
   });
 
   it('Lightning: the bolt lands before the car can crash into its building, and the run waits for it', () => {

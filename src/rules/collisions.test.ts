@@ -62,9 +62,9 @@ describe('course pieces', () => {
 });
 
 describe('hitting vs flying over', () => {
-  it('hits the cones on the ground and stops at their front face', () => {
+  it('hits the cones on the ground at their front face', () => {
     const h = hit(shotAt(24, 0, 0));
-    expect(h).toEqual({ type: 'crash', d: 24, what: 'cones' });
+    expect(h).toMatchObject({ type: 'crash', d: 24, what: 'cones' });
   });
 
   it('flies over anything it is higher than', () => {
@@ -186,7 +186,7 @@ describe('no tunnelling', () => {
 });
 
 describe('rolling', () => {
-  it('rolling along the ground always ends at the next obstacle, not past it', () => {
+  it('rolling along the ground always ends at the next obstacle, ploughing at most a few metres into it', () => {
     for (const p of parts.filter(p => p.x0 <= 0 && p.x1 >= 0)) {
       const s = shotAt(p.z0 - 8, 0, 0, 'roll');
       s.vx = 0; s.vz = -60; s.vy = 0;
@@ -199,7 +199,9 @@ describe('rolling', () => {
         }
       }
       expect(crashed, `item ${p.item}`).toBe(true);
-      expect(-s.z).toBeLessThanOrEqual(p.z0);
+      // the nose touched at p.z0; the car then skids on through the wreckage, but only a little way
+      expect(-s.z).toBeGreaterThan(p.z0 - REACH);
+      expect(-s.z).toBeLessThanOrEqual(p.z0 - REACH + PHYSICS.crashSlideMax + .01);
     }
   });
 });

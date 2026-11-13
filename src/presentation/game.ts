@@ -10,11 +10,11 @@ import { PHYSICS, makeShot } from '../rules/physics';
 import { Run, STEP, buildWorld, type World } from '../rules/run';
 import { freshSave, writeSave, type SaveData } from '../rules/save';
 import { ChaseCamera } from './camera';
-import { V3 } from './cars/kit';
+import { V3, type Wheel } from './cars/kit';
 import { buildCar, type CarModel } from './cars/models';
 import { fitUpgrades } from './cars/upgradeParts';
 import { Catapult } from './catapult';
-import { buildCity, type CityView } from './city';
+import { buildCity, buildingPalette, type CityView } from './city';
 import { Effects } from './effects';
 import { buildRamp } from './ramp';
 import { Post } from './post';
@@ -31,6 +31,7 @@ const PREDICT_DOTS = 36;
 const PREDICT_EVERY = Math.round(1 / 12 / STEP);
 const END_PAUSE = { crash: .9, stop: .6 };
 const MAX_RUN_SECONDS = 30;   // safety net: a launch always ends, even if the car never quite stops
+const HARD_CRASH = 14;   // m/s: hit faster than this and the car's wheels pop off
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
 
 export class Game {
@@ -61,6 +62,8 @@ export class Game {
   private acc = 0;
   private endT = 0;
   private susp = { y: 0, v: 0 };   // body bounce on the wheels
+  /* after a hard crash the wheels pop off and bounce away; they go back on for the next launch */
+  private wreck: { w: Wheel; parent: THREE.Object3D; pos: THREE.Vector3; quat: THREE.Quaternion; v: THREE.Vector3; spin: THREE.Vector3 }[] = [];
 
   constructor(private stage: HTMLElement, private canvas: HTMLCanvasElement, speedCanvas: HTMLCanvasElement,
               level: LevelDef, private save: SaveData, private platform: Platform) {
@@ -128,6 +131,7 @@ export class Game {
   }
 
   private loadCar(i: number) {
+    this.fixWreck();
     if (this.car) this.st.scene.remove(this.car.group);
     this.carIdx = i;
     this.car = buildCar(CARS[i].model);
@@ -150,8 +154,9 @@ export class Game {
     this.cancelDrag();
     if (this.state !== 'home') this.state = 'aim';
     this.run = null; this.pull = { power: 0, heading: 0 }; this.inp.boost = false;
+    this.fixWreck();
     this.car.group.position.set(0, 0, this.world.ramp.startZ); this.car.group.rotation.set(0, 0, 0);
-    this.susp = { y: 0, v: 0 }; this.car.body.position.y = 0;
+    this.susp = { y: 0, v: 0 }; this.car.body.position.y = 0; this.car.body.rotation.z = 0;
     this.city.obstacles.forEach(o => { o.visible = true; });
     this.city.coins.forEach(c => { c.visible = true; });
     this.dots.count = 0;
@@ -302,9 +307,11 @@ export class Game {
         if (ev.cause === 'zap') this.sound.zap(); else this.sound.smash();
         this.buzz('medium');
       } else if (ev.type === 'crash') {
-        fx.spawn('star', V3(s.x, s.y + 1, s.z - 1.5), 18);
-        fx.spawn('chunk', V3(s.x, s.y + .8, s.z - 1), 10);
-        fx.shake = .6;
+        const hard = ev.speed > HARD_CRASH;
+        fx.spawn('star', V3(s.x, s.y + 1, s.z - 1.5), 14);
+        this.breakObstacle(ev.item, ev.speed);
+        if (hard) this.breakCar();
+        fx.shake = hard ? .8 : .55;
         this.susp.v -= 6;
         this.sound.crash(); this.buzz('heavy');
       } else if (ev.type === 'coin') {
@@ -339,12 +346,77 @@ export class Game {
     this.updateCatapult();
   }
 
+  /* The thing the car hit breaks up. Cones, parked cars and buses fly apart (the car ploughs on
+     through them); a building keeps standing but bricks burst out where the car hit it. */
+  private breakObstacle(item: number | null, speed: number) {
+    const s = this.run!.shot, fx = this.fx;
+    if (item === null) { fx.spawn('chunk', V3(s.x, s.y + .8, s.z - 1), 10); return; }   // scraped a side wall
+    const o = this.world.level.course[item], cols = this.city.colours[item];
+    const push = Math.min(14, 5 + speed * .2);           // faster crash, further the pieces fly
+    const fwdX = -Math.sin(s.heading), fwdZ = -Math.cos(s.heading);
+    if (o.kind === 'bld') {
+      // a building with an alley is two pieces drawn in different colours: use the one the car hit
+      const piece = o.gap != null && s.x > o.gap ? 1 : 0;
+      fx.shatter(s.x, .2, -o.z + .4, { cols: buildingPalette(item * 3 + piece), n: 30, w: 3.4, h: 3.2, size: .6, pushX: -fwdX * 3, pushZ: 4 });
+      fx.spawn('dust', V3(s.x, 1, -o.z + .6), 6);
+      return;
+    }
+    this.city.obstacles[item].visible = false;
+    for (const p of this.world.parts.filter(q => q.item === item)) {
+      const w = p.x1 - p.x0, cx = (p.x0 + p.x1) / 2, cz = -(p.z0 + p.z1) / 2;
+      const n = Math.round(Math.min(40, Math.max(12, w * (o.kind === 'cones' ? 2.2 : 3))));
+      fx.shatter(cx, 0, cz, { cols, n, w, h: Math.min(p.h, 3), size: o.kind === 'cones' ? .45 : .75, pushX: fwdX * push, pushZ: fwdZ * push });
+    }
+    fx.spawn('dust', V3(s.x, .6, s.z - 2), 6);
+  }
+
+  /* A hard crash: the wheels pop off and bounce away, a few body panels fly, the body drops. */
+  private breakCar() {
+    if (this.wreck.length) return;
+    const s = this.run!.shot, scene = this.st.scene, h = s.heading;
+    const fwd = V3(-Math.sin(h), 0, -Math.cos(h)), side = V3(-Math.cos(h), 0, Math.sin(h));
+    for (const w of this.car.wheels) {
+      const parent = w.group.parent; if (!parent) continue;
+      const pos = w.group.position.clone(), quat = w.group.quaternion.clone();
+      scene.attach(w.group);
+      const out = Math.sign(pos.x) || 1;
+      const v = side.clone().multiplyScalar(-out * (2.5 + Math.random() * 3)).addScaledVector(fwd, 2 + Math.random() * 5);
+      v.y = 4 + Math.random() * 4;
+      this.wreck.push({ w, parent, pos, quat, v, spin: V3((Math.random() - .5) * 16, (Math.random() - .5) * 10, (Math.random() - .5) * 16) });
+    }
+    this.fx.shatter(s.x, .5, s.z, { cols: [CARS[this.carIdx].accent, CARS[this.carIdx].accent, 0x1d1f24, 0xdfe3ea], n: 12, w: 1.4, h: .6, size: .4, pushX: fwd.x * 4, pushZ: fwd.z * 4 });
+  }
+
+  private stepWreck(dt: number) {
+    if (!this.wreck.length) return;
+    for (const p of this.wreck) {
+      const g = p.w.group;
+      p.v.y -= 22 * dt;
+      g.position.addScaledVector(p.v, dt);
+      if (g.position.y < p.w.r) {
+        g.position.y = p.w.r; p.v.y = Math.abs(p.v.y) > 1.5 ? -p.v.y * .45 : 0;
+        p.v.x *= .8; p.v.z *= .8; p.spin.multiplyScalar(.7);
+      }
+      g.rotation.x += p.spin.x * dt; g.rotation.y += p.spin.y * dt; g.rotation.z += p.spin.z * dt;
+    }
+    // the wheel-less body settles onto the street with a slight lean
+    const drop = -Math.min(...this.wreck.map(p => p.w.r)) * .75, b = this.car.body;
+    b.position.y += (drop - b.position.y) * Math.min(1, dt * 10);
+    b.rotation.z += (.1 - b.rotation.z) * Math.min(1, dt * 6);
+  }
+
+  /* put the wheels back on */
+  private fixWreck() {
+    for (const p of this.wreck) { p.parent.add(p.w.group); p.w.group.position.copy(p.pos); p.w.group.quaternion.copy(p.quat); }
+    this.wreck = [];
+  }
+
   /* springy body on the wheels: kicked by landings, settles by itself */
   private stepSuspension(dt: number) {
     const k = 260, damp = 14;
     this.susp.v += (-k * this.susp.y - damp * this.susp.v) * dt;
     this.susp.y = Math.max(-.35, Math.min(.25, this.susp.y + this.susp.v * dt));
-    this.car.body.position.y = this.susp.y;
+    if (!this.wreck.length) this.car.body.position.y = this.susp.y;
   }
 
   /* engine, wind and boost hum follow what the car is doing */
@@ -376,6 +448,7 @@ export class Game {
     if (this.state === 'flying' && this.run) this.stepFlight(dt, now);
     else if (this.car.mainFlame) this.car.mainFlame.scale.set(.75, .75, .6 + Math.random() * .15);
     this.stepSuspension(dt);
+    this.stepWreck(dt);
     this.stepSound();
     this.city.coins.forEach((c, i) => { if (c.visible) c.rotation.y = now * 2.4 + i * .3; });
     this.city.updateCoins();

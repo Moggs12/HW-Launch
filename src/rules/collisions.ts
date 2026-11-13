@@ -30,7 +30,7 @@ export function courseParts(level: LevelDef): Part[] {
 }
 
 export type Hit =
-  | { type: 'crash'; d: number; what: ObstacleKind | 'side' }
+  | { type: 'crash'; d: number; what: ObstacleKind | 'side'; item?: number }
   | { type: 'smash'; item: number };
 
 export const REACH = 1.9;  // how far in front of the car's centre counts as touching (its nose)
@@ -53,7 +53,7 @@ export function hitTest(s: Shot, halfWidth: number, parts: readonly Part[], brok
     if (broken.has(p.item)) continue;
     if (d + REACH > p.z0 && d < p.z1 + TAIL_GRACE && s.y < p.h && s.x + pw > p.x0 && s.x - pw < p.x1) {
       if (s.smash && p.kind === 'bld') { s.smash = false; return { type: 'smash', item: p.item }; }
-      return { type: 'crash', d: p.z0, what: p.kind };
+      return { type: 'crash', d: p.z0, what: p.kind, item: p.item };
     }
   }
   return null;

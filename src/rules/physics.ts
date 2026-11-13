@@ -23,6 +23,10 @@ export const PHYSICS = {
   stopSpeed: .25,
   swerveTurnRate: 1.6,
   rampStartShare: .5,         // the catapult flings the car up the ramp at this share of launch speed
+  // crashes: the car ploughs on through the wreckage, braking hard, instead of stopping dead
+  crashSlideMin: 1.5, crashSlideMax: 3, crashSlidePerSpeed: .06,   // metres (a building wall stops it sooner)
+  crashSlideWallMax: 1.4,
+  crashDecel: 16,
 };
 
 const MAX_DT = .1;
@@ -157,7 +161,8 @@ export function stepShot(s: Shot, dt: number, inp: FlightInput | null) {
   if (s.mode === 'ramp') { stepRamp(s, dt); return; }
   steerSwerve(s, dt);
   const fx = -Math.sin(s.heading), fz = -Math.cos(s.heading);
-  if (s.mode === 'air' || s.mode === 'crash') {
+  if (s.mode === 'crash') { stepCrash(s, dt); return; }
+  if (s.mode === 'air') {
     let g = P.gravity;
     if (s.mode === 'air') {
       if (inp?.boost && s.fuel > 0) { s.fuel = Math.max(0, s.fuel - dt); s.vx += fx * P.boostPush * dt; s.vz += fz * P.boostPush * dt; s.vy += P.boostLift * dt; s.boosting = true; }
@@ -168,7 +173,6 @@ export function stepShot(s: Shot, dt: number, inp: FlightInput | null) {
     s.x += s.vx * dt; s.y += s.vy * dt; s.z += s.vz * dt;
     if (s.y <= 0) {
       s.y = 0;
-      if (s.mode === 'crash') { s.vx = s.vz = s.vy = 0; s.mode = 'stop'; return; }
       s.impact = -s.vy;
       if (s.vy < -P.bounceMinSpeed) {
         s.events.push('bounce');
@@ -191,8 +195,26 @@ export function stepShot(s: Shot, dt: number, inp: FlightInput | null) {
   }
 }
 
-/* Stop the car where it hit something: it drops straight down from there. */
-export function crashAt(s: Shot, d: number) {
-  s.mode = 'crash'; s.burn = 0;
-  s.z = -d + 1.9; s.vx = 0; s.vz = 0; s.vy = Math.min(s.vy, 0);
+/* The car hits something with its nose at distance d. It keeps going a little way through the
+   wreckage (further when it was going faster, less into a wall), braking hard, and drops to the
+   ground. Returns the speed it hit at, for the show. */
+export function crashAt(s: Shot, d: number, wall = false): number {
+  const P = PHYSICS;
+  const speed = Math.hypot(s.vx, s.vz);
+  const slide = Math.min(wall ? P.crashSlideWallMax : P.crashSlideMax, P.crashSlideMin + speed * P.crashSlidePerSpeed);
+  const v = Math.sqrt(2 * P.crashDecel * slide);       // just enough speed to cover the slide while braking
+  const a = speed > 1e-6 ? Math.atan2(s.vx, s.vz) : Math.atan2(-Math.sin(s.heading), -Math.cos(s.heading));
+  s.mode = 'crash'; s.burn = 0; s.swerve = null;
+  s.z = -d + 1.9; s.vx = Math.sin(a) * v; s.vz = Math.cos(a) * v; s.vy = Math.min(s.vy, 0);
+  return speed;
+}
+
+function stepCrash(s: Shot, dt: number) {
+  const P = PHYSICS;
+  const sp = Math.max(0, Math.hypot(s.vx, s.vz) - P.crashDecel * dt), k = sp / (Math.hypot(s.vx, s.vz) || 1);
+  s.vx *= k; s.vz *= k;
+  s.vy -= P.gravity * dt;
+  s.x += s.vx * dt; s.y += s.vy * dt; s.z += s.vz * dt;
+  if (s.y <= 0) { s.y = 0; s.vy = 0; }
+  if (sp <= 0 && s.y === 0) { s.vx = s.vz = 0; s.mode = 'stop'; }
 }

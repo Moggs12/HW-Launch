@@ -19,7 +19,7 @@ export function buildWorld(level: LevelDef): World {
 
 export type RunEvent =
   | { type: 'shot'; ev: ShotEvent }
-  | { type: 'crash'; what: string }
+  | { type: 'crash'; what: string; item: number | null; speed: number }   // item: the course obstacle hit (null: a side wall)
   | { type: 'smash'; item: number; cause: 'smash' | 'zap' }
   | { type: 'zap'; part: Part }
   | { type: 'coin'; index: number };
@@ -69,7 +69,11 @@ export class Run {
       const gone = this.zap ? new Set([...this.broken, this.zap.part.item]) : this.broken;
       const hit = hitTest(s, CARS[this.carIdx].halfWidth, w.parts, gone, w.layout.side, w.layout.sideX);
       if (hit?.type === 'smash') this.smash(hit.item, 'smash');
-      else if (hit) { this.crashed = true; crashAt(s, hit.d); this.events.push({ type: 'crash', what: hit.what }); }
+      else if (hit) {
+        this.crashed = true;
+        const speed = crashAt(s, hit.d, hit.what === 'bld' || hit.what === 'side');
+        this.events.push({ type: 'crash', what: hit.what, item: hit.item ?? null, speed });
+      }
     }
     for (const index of grabCoins(s, w.layout.coins, this.taken)) { this.coinsGrabbed++; this.events.push({ type: 'coin', index }); }
   }

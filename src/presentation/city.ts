@@ -18,9 +18,16 @@ const SHOP_FRAMES = [0x2b3a67, 0x8a2b2b, 0x1f6b52, 0x5a3d8a];
 const AWNING_COLS = ['#e8231c', '#1440c4', '#0f9d58', '#ff7a1a', '#7b3fd1'];
 const PARKED_COLS = [0x2bb3ff, 0xff4fa0, 0x7bd34a, 0xffd21f, 0xa36bff];
 
+/* Paint colours of a building's bricks (ci: the colour index the building was drawn with). */
+export function buildingPalette(ci: number) {
+  const c = ci % BLD_COLORS.length;
+  return [BLD_COLORS[c], BLD_COLORS[c], TRIMS[TRIM_FOR[c]], 0xfff3dc, 0x6cc0ff];
+}
+
 export interface CityView {
   obstacles: THREE.Object3D[];   // per course item
   coins: THREE.Object3D[];       // per coin in layout.coins: move / hide these, then call updateCoins()
+  colours: number[][];           // per course item: paint colours for the pieces when it breaks up
   updateCoins(): void;
 }
 
@@ -292,6 +299,10 @@ export function buildCity(scene: THREE.Scene, world: World): CityView {
     coinMesh.instanceMatrix.needsUpdate = true;
   }
   updateCoins();
-
-  return { obstacles, coins, updateCoins };
+  const colours = level.course.map((o, i) =>
+    o.kind === 'cones' ? [0xff6a13, 0xff6a13, 0xffffff]
+      : o.kind === 'cars' ? [...PARKED_COLS, 0x1d1f24]
+      : o.kind === 'bus' ? [0xffc21a, 0xffc21a, 0x1d1f24, 0x9fd0ff]
+      : buildingPalette(i * 3));
+  return { obstacles, coins, colours, updateCoins };
 }

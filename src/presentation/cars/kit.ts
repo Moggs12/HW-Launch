@@ -30,6 +30,7 @@ export const MAT = {
   dark: () => std(0x23262d, { roughness: .55, metalness: .3 }),
   red: () => std(0xff2b2b, { emissive: 0xff1a1a, emissiveIntensity: 2.2 }),
   amber: () => std(0xffa31a, { emissive: 0xff8a00, emissiveIntensity: 1.8 }),
+  headlight: () => std(0xfff8e0, { emissive: 0xfff1c4, emissiveIntensity: 1.6, roughness: .2 }),
   gold: () => paint(0xffc21a, { metalness: .9, roughness: .22 }),
   white: () => paint(0xf6f8fb),
   eyeBlack: () => paint(0x111216),
@@ -71,8 +72,10 @@ export function rbox(g: THREE.Object3D, w: number, h: number, d: number, r: numb
 export function mesh(g: THREE.Object3D, geo: THREE.BufferGeometry, mat: THREE.Material, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0) {
   const m = finish(new THREE.Mesh(geo, mat)); m.position.set(x, y, z); m.rotation.set(rx, ry, rz); g.add(m); return m;
 }
-export function tube(g: THREE.Object3D, pts: P3[], r: number, mat: THREE.Material, closed = false) {
-  return mesh(g, new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts.map(p => V3(...p)), closed), 40, r, 12, closed), mat);
+export function tube(g: THREE.Object3D, pts: P3[], r: number, mat: THREE.Material, closed = false, caps = false) {
+  const t = mesh(g, new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts.map(p => V3(...p)), closed), 40, r, 12, closed), mat);
+  if (caps && !closed) for (const p of [pts[0], pts[pts.length - 1]]) mesh(g, new THREE.SphereGeometry(r, 12, 8), mat, ...p);   // round off the open ends
+  return t;
 }
 export function lathe(pts: [number, number][], mat: THREE.Material, segs = 40) {
   return new THREE.Mesh(new THREE.LatheGeometry(pts.map(p => V2(p[0], p[1])), segs), mat);
@@ -114,6 +117,7 @@ export function makeWheel(r: number, w: number, rimColor: number, opts: WheelOpt
   for (let i = 0; i <= rs; i++) { const a = i / rs * Math.PI / 2; pts.push([r - e + Math.sin(a) * e, -w / 2 + e - Math.cos(a) * e]); }
   for (let i = 0; i <= rs; i++) { const a = i / rs * Math.PI / 2; pts.push([r - e + Math.cos(a) * e, w / 2 - e + Math.sin(a) * e]); }
   pts.push([ri * .98, w / 2 - .01]);
+  pts.push([ri * .98, -w / 2 + .01]);   // close the bore so no inside faces peek past the rim
   const tyre = finish(lathe(pts, MAT.rubber(), seg)); tyre.rotation.z = Math.PI / 2; spin.add(tyre);
   if (opts.tread) {
     const n = opts.tread, lug = new THREE.BoxGeometry(w * .8, r * .07, r * .14);
@@ -144,7 +148,7 @@ export function makeWheel(r: number, w: number, rimColor: number, opts: WheelOpt
 /* engine glow flame (for boost + rocket) pointing +z */
 export function flameCone(g: THREE.Object3D, r: number, len: number, x: number, y: number, z: number) {
   const grp = new THREE.Group(); grp.position.set(x, y, z);
-  const flameMat = (color: number, opacity: number) => new THREE.MeshBasicMaterial({ color: new THREE.Color(color).multiplyScalar(6), transparent: true, opacity, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+  const flameMat = (color: number, opacity: number) => (cache['f' + color + opacity] ??= new THREE.MeshBasicMaterial({ color: new THREE.Color(color).multiplyScalar(6), transparent: true, opacity, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
   const outer = new THREE.Mesh(new THREE.ConeGeometry(r, len, 20, 1, true), flameMat(0xff7a1a, .75));
   outer.rotation.x = Math.PI / 2; outer.position.z = len / 2; grp.add(outer);
   const inner = new THREE.Mesh(new THREE.ConeGeometry(r * .55, len * .62, 16, 1, true), flameMat(0xfff2a0, .95));
@@ -196,7 +200,24 @@ export function mergeStatic(root: THREE.Object3D, keep: Iterable<THREE.Object3D 
   return out;
 }
 
-function flipWinding(g: THREE.BufferGeometry) {
+/* Free the GPU copies of everything under root. Cached (shared) materials stay alive;
+   one-off materials (number plates) and their textures are disposed. */
+const shared = () => new Set(Object.values(cache));
+export function disposeTree(root: THREE.Object3D) {
+  const keep = shared();
+  root.traverse(o => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh) return;
+    m.geometry.dispose();
+    for (const mat of Array.isArray(m.material) ? m.material : [m.material]) {
+      if (keep.has(mat)) continue;
+      (mat as THREE.MeshStandardMaterial).map?.dispose();
+      mat.dispose();
+    }
+  });
+}
+
+export function flipWinding(g: THREE.BufferGeometry) {
   for (const a of Object.values(g.attributes) as THREE.BufferAttribute[]) {
     const s = a.itemSize, arr = a.array;
     for (let i = 0; i < a.count; i += 3) for (let k = 0; k < s; k++) {

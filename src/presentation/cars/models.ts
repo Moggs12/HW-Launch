@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import {
-  MAT, V3, cyl, flameCone, lamp, lathe, finish, makeWheel, mergeStatic, mesh, orient, paint, plate, rbox, slab, sphere, tube,
+  MAT, V3, cyl, disposeTree, flameCone, lamp, lathe, finish, makeWheel, mergeStatic, mesh, orient, paint, plate, rbox, shapeFrom, slab, sphere, tube,
   type Cmd, type Wheel, type WheelOpts,
 } from './kit';
 
@@ -37,10 +37,17 @@ function buildBanana() {
   const body = mesh(car, new THREE.TubeGeometry(curve, 64, .56, 18, false), Y); body.scale.x = 1.22;
   // tips: tapered brown ends
   const tipF = curve.getPoint(0), tipB = curve.getPoint(1);
-  sphere(car, .5, Y, 0, tipF.y, tipF.z, 1.22, 1, 1);
-  sphere(car, .5, Y, 0, tipB.y, tipB.z, 1.22, 1, 1);
-  cyl(car, .12, .26, .6, BR, 0, tipB.y + .32, tipB.z + .22, -.75, 0, 0);
-  sphere(car, .18, BR, 0, tipF.y + .18, tipF.z - .36);
+  sphere(car, .56, Y, 0, tipF.y, tipF.z, 1.22, 1, 1);
+  sphere(car, .56, Y, 0, tipB.y, tipB.z, 1.22, 1, 1);
+  cyl(car, .1, .24, .62, BR, 0, tipB.y + .42, tipB.z + .42, .7, 0, 0, 18);      // stem, out along the tube's end
+  sphere(car, .24, BR, 0, tipF.y + .22, tipF.z - .46, 1.15, 1, 1.15);            // dark nub on the nose
+  // chrome bull bar + headlights (card art)
+  tube(car, [[-.72, .56, -1.98], [-.4, .52, -2.08], [.4, .52, -2.08], [.72, .56, -1.98]], .05, MAT.chrome(), false, true);
+  SIDES.forEach(s => {
+    cyl(car, .035, .035, .3, MAT.chrome(), s * .42, .7, -2.02, 0, 0, 0, 10);
+    sphere(car, .15, MAT.chrome(), s * .42, .86, -2.06, 1, 1, .8);
+    lamp(car, .11, MAT.headlight(), s * .42, .86, -2.15);
+  });
   // ridges along the peel
   SIDES.forEach(s => tube(car, [[s * .6, 1.25, -2.0], [s * .66, .86, -1.2], [s * .68, .74, 0], [s * .66, .82, 1.0], [s * .6, 1.2, 1.95]], .03, paint(0xf0b400)));
   // seat, backrest, steering, roll cage
@@ -55,26 +62,65 @@ function buildBanana() {
   // little engine + twin pipes at the back
   rbox(car, .7, .4, .55, .1, MAT.chrome(), 0, 1.48, 1.25);
   rbox(car, .5, .12, .4, .05, MAT.dark(), 0, 1.74, 1.25);
-  SIDES.forEach(s => { tube(car, [[s * .25, 1.4, 1.5], [s * .32, 1.45, 1.85], [s * .36, 1.75, 2.05]], .07, MAT.chrome()); lamp(car, .065, MAT.dark(), s * .36, 1.82, 2.12); });
+  SIDES.forEach(s => { tube(car, [[s * .25, 1.4, 1.5], [s * .32, 1.45, 1.85], [s * .36, 1.75, 2.05]], .07, MAT.chrome(), false, true); lamp(car, .065, MAT.dark(), s * .36, 1.82, 2.12); });
   // axles & wheels (chunky off-road)
   cyl(car, .07, .07, 2.2, MAT.chrome(), 0, .42, -1.3, 0, 0, Math.PI / 2, 14);
   cyl(car, .07, .07, 2.2, MAT.chrome(), 0, .46, 1.3, 0, 0, Math.PI / 2, 14);
   SIDES.forEach(s => {
     addWheel(m, s * 1.12, .42, -1.3, .42, .36, 0xffd51f, { tread: 18 });
     addWheel(m, s * 1.12, .46, 1.3, .46, .42, 0xffd51f, { tread: 18 });
-    lamp(car, .09, MAT.red(), s * .42, 1.18, 2.05);
+    lamp(car, .09, MAT.red(), s * .42, .64, 1.99);
   });
-  plate(car, 'BANANA', 0, 1.12, 2.0, .5).rotation.x = -.2;
+  // rear tail panel under the stalk end: plate + lights, where the chase camera sees them
+  rbox(car, 1.1, .3, .08, .04, MAT.dark(), 0, .64, 1.92);
+  tube(car, [[0, .78, 1.9], [0, .95, 1.75]], .04, MAT.dark());
+  plate(car, 'BANANA', 0, .64, 1.97, .5);
   m.mounts = { halfW: .75, wingY: 1.0, wingZ: .1, boostY: 1.15, boostZ: 1.75, boostX: .5 };
   return m;
 }
 
 /* ---------- 2. FLAME RACER ---------- */
 const FLAME_CMDS: Cmd[] = [['m', 0, -.16], ['q', 1.0, -.22, 2.0, -.1], ['q', 1.25, -.02, 2.2, .09], ['q', 1.35, .1, 1.8, .24], ['q', .9, .16, .25, .17], ['q', -.12, .02, 0, -.16]];
+const FLAME_BODY: Cmd[] = [['m', -2.0, .36], ['q', -2.18, .42, -2.08, .6], ['q', -1.4, .82, -.55, .86], ['l', 1.72, .9], ['q', 1.98, .9, 2.0, .68], ['l', 2.0, .46], ['q', 1.98, .36, 1.8, .36], ['l', -2.0, .36]];
+const FLAME_BEVEL = .2;
+/* height of the bevelled hood top at car z: the profile's hood curve pushed out by the bevel */
+function flameHoodY(z: number) {
+  const P0 = [-2.08, .6], P1 = [-1.4, .82], P2 = [-.55, .86], bs = FLAME_BEVEL * .92;
+  const at = (t: number) => {
+    const u = 1 - t, pz = u * u * P0[0] + 2 * u * t * P1[0] + t * t * P2[0], py = u * u * P0[1] + 2 * u * t * P1[1] + t * t * P2[1];
+    const dz = 2 * u * (P1[0] - P0[0]) + 2 * t * (P2[0] - P1[0]), dy = 2 * u * (P1[1] - P0[1]) + 2 * t * (P2[1] - P1[1]), l = Math.hypot(dz, dy);
+    return [pz - bs * dy / l, py + bs * dz / l] as const;   // along the upward normal (-dy, dz)
+  };
+  if (z >= at(1)[0]) return P2[1] + bs;
+  let lo = 0, hi = 1;
+  for (let i = 0; i < 24; i++) { const mid = (lo + hi) / 2; if (at(mid)[0] < z) lo = mid; else hi = mid; }
+  return at(lo)[1];
+}
+/* a flame painted on the hood: the flame outline laid flat and bent to follow the hood */
+function hoodFlame(g: THREE.Object3D, mat: THREE.Material, x: number, z0: number, len: number, wide: number, mirror: boolean) {
+  const geo = new THREE.ExtrudeGeometry(shapeFrom(FLAME_CMDS), { depth: .012, bevelEnabled: false, curveSegments: 10 });
+  const p = geo.attributes.position, sx = len / 2.2;
+  for (let i = 0; i < p.count; i++) {
+    const cz = z0 + p.getX(i) * sx, cx = p.getY(i) * wide;
+    p.setXYZ(i, cx, flameHoodY(cz) + .006 + p.getZ(i), cz);
+  }
+  geo.computeVertexNormals();
+  const me = mesh(g, geo, mat, x); if (mirror) me.scale.x = -1;
+  return me;
+}
 function buildFlame() {
   const m = newCar(), car = m.group, R = paint(0xe3221a), K = MAT.dark();
   // body
-  slab(car, [['m', -2.0, .36], ['q', -2.18, .42, -2.08, .6], ['q', -1.4, .82, -.55, .86], ['l', 1.72, .9], ['q', 1.98, .9, 2.0, .68], ['l', 2.0, .46], ['q', 1.98, .36, 1.8, .36], ['l', -2.0, .36]], 1.86, .2, R);
+  slab(car, FLAME_BODY, 1.86, FLAME_BEVEL, R);
+  // hood flames, headlights, grille (card art)
+  SIDES.forEach(s => {
+    hoodFlame(car, paint(0xffd21f), s * .26, -1.95, 1.12, .95, s < 0);
+    hoodFlame(car, paint(0xff8a1a), s * .26, -1.86, .72, .6, s < 0);
+  });
+  SIDES.forEach(s => {
+    rbox(car, .42, .1, .1, .04, MAT.headlight(), s * .58, .72, -2.18, -.5, s * .25, 0);
+  });
+  rbox(car, 1.1, .16, .1, .05, K, 0, .5, -2.3);
   // cabin
   slab(car, [['m', -.62, .86], ['q', -.12, 1.36, .5, 1.4], ['q', 1.32, 1.38, 1.72, .9], ['l', -.62, .86]], 1.4, .14, MAT.glass());
   slab(car, [['m', -.08, 1.38], ['q', .5, 1.5, 1.22, 1.42], ['l', 1.22, 1.34], ['q', .5, 1.42, -.08, 1.3], ['l', -.08, 1.38]], 1.22, .06, R);
@@ -115,7 +161,11 @@ function buildShark() {
   rbox(car, 1.5, .16, .12, .05, MAT.eyeBlack(), 0, .62, -2.36);
   for (let i = 0; i < 7; i++) mesh(car, new THREE.ConeGeometry(.08, .2, 12), W, -.6 + i * .2, .74, -2.37, Math.PI, 0, 0);
   for (let i = 0; i < 6; i++) mesh(car, new THREE.ConeGeometry(.07, .17, 12), W, -.5 + i * .2, .5, -2.37);
-  SIDES.forEach(s => { sphere(car, .15, W, s * .7, 1.0, -1.72); sphere(car, .08, MAT.eyeBlack(), s * .74, 1.02, -1.84); });
+  SIDES.forEach(s => {
+    // eyes sit proud of the rounded nose so they read from the front and the side
+    sphere(car, .17, W, s * .56, 1.12, -1.98, 1, 1, .75); sphere(car, .085, MAT.eyeBlack(), s * .58, 1.13, -2.1);
+    rbox(car, .36, .09, .16, .04, BL, s * .55, 1.3, -1.98, -.25, 0, s * .45);   // cross eyebrows
+  });
   // bubble canopy
   sphere(car, .62, MAT.glass(), 0, 1.3, -.25, .95, .55, 1.3);
   // dorsal fin + tail fin
@@ -133,8 +183,8 @@ function buildShark() {
   rbox(car, 1.5, .12, .08, .04, MAT.white(), 0, 1.12, 2.15);
   SIDES.forEach(s => { cyl(car, .07, .07, .25, MAT.chrome(), s * .35, .42, 2.12, Math.PI / 2, 0, 0, 18); });
   SIDES.forEach(s => {
-    addWheel(m, s * .95, .44, -1.2, .44, .38, 0xf6f8fb);
-    addWheel(m, s * .97, .47, 1.2, .47, .44, 0xf6f8fb);
+    addWheel(m, s * .95, .44, -1.2, .44, .38, 0x3a3f4a);
+    addWheel(m, s * .97, .47, 1.2, .47, .44, 0x3a3f4a);
   });
   m.mounts = { halfW: .95, wingY: .8, wingZ: .0, boostY: 1.0, boostZ: 1.95, boostX: .62 };
   return m;
@@ -257,8 +307,17 @@ export const MODELS: Record<string, () => CarModel> = {
   banana: buildBanana, flame: buildFlame, shark: buildShark, dino: buildDino, rocket: buildRocket, bolt: buildBolt,
 };
 
+/* Free a car's GPU buffers once it is out of the scene (shared materials stay cached). */
+export function disposeCar(m: CarModel) { disposeTree(m.group); }
+
+/* The game shows one car at a time: when a new one is built, the last one is freed,
+   but only if it has already been taken out of the scene. */
+let lastBuilt: CarModel | null = null;
+
 export function buildCar(model: string): CarModel {
+  if (lastBuilt && !lastBuilt.group.parent) disposeCar(lastBuilt);
   const m = MODELS[model]();
+  lastBuilt = m;
   // move everything except the wheels into the body group
   const wheels = new Set<THREE.Object3D>(m.wheels.map(w => w.group));
   for (const c of [...m.group.children]) if (!wheels.has(c)) m.body.add(c);

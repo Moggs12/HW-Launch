@@ -1,13 +1,13 @@
 import * as THREE from 'three';
 import { MAX_LEVEL } from '../../content/upgrades';
 import type { UpgradeLevels } from '../../rules/save';
-import { MAT, V3, cyl, finish, flameCone, lathe, mergeStatic, mesh, orient, paint, rbox, slab, sphere } from './kit';
+import { MAT, V3, cyl, disposeTree, finish, flameCone, lathe, mergeStatic, mesh, orient, paint, rbox, slab, sphere } from './kit';
 import type { CarModel } from './models';
 
 /* What upgrades look like on the car: wings, booster tanks, bigger (and finally gold) wheels. */
 export function fitUpgrades(m: CarModel, lv: UpgradeLevels, accent: number) {
   const mt = m.mounts;
-  if (m.upgrades) m.body.remove(m.upgrades);
+  if (m.upgrades) { m.body.remove(m.upgrades); disposeTree(m.upgrades); }
   const u = new THREE.Group(); m.upgrades = u; m.body.add(u);
   m.boostFlames = [];
   if (lv.wings > 0) {
@@ -40,7 +40,11 @@ export function fitUpgrades(m: CarModel, lv: UpgradeLevels, accent: number) {
       r.userData.base ??= r.material;
       r.material = gold ? MAT.gold() : r.userData.base;
     }
-    const k = 1 + .03 * lv.wheels;
+    // bigger tyres: grow from the ground up (keep the tyre on the road) and roll at the new size
+    const k = 1 + .03 * lv.wheels, ud = w.group.userData;
+    ud.baseY ??= w.group.position.y; ud.baseR ??= w.r;
     w.spin.scale.set(1 + .04 * lv.wheels, k, k);
+    w.group.position.y = ud.baseY + ud.baseR * (k - 1);
+    w.r = ud.baseR * k;
   }
 }
